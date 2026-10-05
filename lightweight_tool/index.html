@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="local-token" content="__CSRF__"><title>HIWIN 邮件工作台</title><link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script></head>
-<body><header><div class="header-inner"><small>HIWIN · LOCAL MAIL WORKSPACE</small><h1>邮件工作台</h1><p>选择国家与语言，确认整批内容，再从公司邮箱发送。</p></div></header>
+<body><header><div class="header-inner"><div class="header-top"><small>HIWIN · LOCAL MAIL WORKSPACE</small><span class="author-tag" aria-label="工具作者">Created by <strong>Frank Fan</strong></span></div><h1>邮件工作台</h1><p>选择国家与语言，确认整批内容，再从公司邮箱发送。</p></div></header>
 <main><div id="notice" role="status" hidden></div>
 <div class="steps"><span>① 模板与名单</span><span>② 整批预览</span><span>③ 人工批准</span><span>④ 发送与记录</span><span>⑤ 查回复 · 人工接手</span></div>
 <section class="card"><h2>连接 <span id="mailBadge" class="badge">公司邮箱未连接</span> <span id="sheetBadge" class="badge">Sheet 未连接</span></h2>
@@ -29,5 +29,6 @@
 <p class="hint" id="recordCount"></p><p class="hint">记录以日本时间显示，括号内为收件人当地时间。删除仅从本地列表移除，已发邮件和 Google Sheet 日志保留；待发送的定时任务请先取消。</p>
 <div class="overflow"><table><thead><tr><th class="record-check"><input type="checkbox" id="recordSelectPage" aria-label="选择本页可删除记录"></th><th>类型 / 地区</th><th>发件员工</th><th>机构 / 收件人</th><th>状态 / 时间</th><th>回复 / 下一步</th><th>Sheet</th><th>操作</th></tr></thead><tbody id="logs"></tbody></table></div><div class="pagination"><div><label for="recordPageSize">每页记录</label><select id="recordPageSize"><option value="5">5 条</option><option value="10">10 条</option><option value="30">30 条</option><option value="50">50 条</option><option value="100">100 条</option></select></div><button id="recordPrev" class="secondary">上一页</button><span id="recordPageInfo" class="hint" aria-live="polite"></span><button id="recordNext" class="secondary">下一页</button></div></section>
 </main>
+<footer class="app-credit" aria-label="工具作者">Created by <strong>Frank Fan</strong></footer>
 <dialog id="sendConfirm" aria-labelledby="sendConfirmTitle"><form method="dialog"><h2 id="sendConfirmTitle"></h2><p id="sendConfirmSummary" class="hint"></p><p id="sendConfirmTime" class="hint" hidden></p><ul id="sendConfirmRecipients"></ul><div class="confirm-actions"><button class="secondary" value="cancel" autofocus>取消</button><button id="sendConfirmAccept" value="confirm">确认发送</button></div></form></dialog>
 </body></html>

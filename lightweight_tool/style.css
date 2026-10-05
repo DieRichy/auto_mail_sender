@@ -18,3 +18,7 @@ dialog{width:min(540px,calc(100vw - 32px));max-height:calc(100dvh - 40px);overfl
 button.danger{color:#a32929;border-color:#dcbaba}button.danger:hover:not(:disabled){background:#fff0f0}
 
 .format-toolbar{display:flex;gap:6px;flex-wrap:wrap}.format-toolbar button{font-size:13px;padding:7px 12px;margin:0}.format-help{margin:6px 0 8px}.mail-heading{font-weight:700;line-height:1.7;margin:10px 0 4px;white-space:pre-wrap;overflow-wrap:anywhere}.mail-heading-1{font-size:20px}.mail-heading-2{font-size:18px}.mail-heading-3{font-size:16px}
+
+.app-credit{max-width:1112px;margin:0 auto;padding:0 24px 28px;text-align:center;font-size:12px;line-height:1.6;color:#7b8b83}.app-credit strong{font-weight:600;color:#526d61}
+
+.header-top{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}.author-tag{margin-left:auto;white-space:nowrap;font-size:12px;line-height:1.5;color:#dcebe6;border:1px solid #ffffff33;border-radius:20px;padding:5px 10px}.author-tag strong{font-weight:600;color:#fff}
