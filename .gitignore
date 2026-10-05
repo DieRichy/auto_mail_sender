@@ -1,0 +1,20 @@
+# Only app source is published; operational spreadsheets and drafts stay local.
+/*
+!/.gitignore
+!/README.md
+!/.github/
+!/lightweight_tool/
+/lightweight_tool/*
+!/lightweight_tool/.gitignore
+!/lightweight_tool/app.py
+!/lightweight_tool/app.js
+!/lightweight_tool/index.html
+!/lightweight_tool/style.css
+!/lightweight_tool/test_app.py
+!/lightweight_tool/default_templates.json
+!/lightweight_tool/SheetBridge.gs
+!/lightweight_tool/README.md
+!/lightweight_tool/启动邮件工具.command
+!/lightweight_tool/contacts.example.json
+!/lightweight_tool/sender_contacts.example.json
+!/lightweight_tool/local_config.example.json

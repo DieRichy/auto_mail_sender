@@ -1,0 +1,11 @@
+outbox.sqlite3*
+__pycache__/
+*.pyc
+uploads/
+backups/
+assets/
+contacts.json
+sender_contacts.json
+local_config.json
+.env*
+*.png

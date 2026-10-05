@@ -1,0 +1,23 @@
+[
+  {
+    "id": "TEST-20261002-001",
+    "name": "HIWIN Test Agency",
+    "email": "workflow-test@example.com",
+    "country": "测试",
+    "blocked": false
+  },
+  {
+    "id": "SG-007",
+    "name": "Example Travel Agency",
+    "email": "partner7@example.com",
+    "country": "新加坡",
+    "blocked": false
+  },
+  {
+    "id": "SG-012",
+    "name": "Example Agency 12",
+    "email": "partner12@example.com",
+    "country": "新加坡",
+    "blocked": false
+  }
+]

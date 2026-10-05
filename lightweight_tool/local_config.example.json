@@ -1,0 +1,10 @@
+{
+  "spreadsheet_id": "YOUR_SPREADSHEET_ID",
+  "default_whatsapp": {
+    "phone": "",
+    "url": "",
+    "qr": ""
+  },
+  "sender_email": "employee@hiwin-japan.co.jp",
+  "sender_name": "Employee"
+}

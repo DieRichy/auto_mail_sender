@@ -1,0 +1,31 @@
+[
+  {
+    "id": "test-en",
+    "name": "English · 单封测试",
+    "language": "English",
+    "subject": "[HIWIN Co., Ltd. Workflow Test] {{agency_name}} | {{test_id}}",
+    "body": "Dear {{agency_name}} Team,\n\nThis is a single test email for the outreach workflow of HIWIN Co., Ltd.\nIt checks template variables, email sending, and Google Sheet logging.\nNo travel agency is being contacted in this test.\n\nTest ID: {{test_id}}\n\nBest regards,\n{{sender_name}}\nHIWIN Co., Ltd."
+  },
+  {
+    "id": "outreach-en",
+    "name": "English · 日本旅游合作",
+    "language": "English",
+    "subject": "Japan Travel Partnership | HIWIN Co., Ltd.",
+    "body": "Dear {{agency_name}} Team,\n\nHIWIN Co., Ltd. operates Apartment Hotel 11, offering apartment-style stays across 60 properties and approximately 3,000 guest rooms in Japan. Our range of properties and room types supports independent travellers, families and groups, giving your agency flexible options for Japan itineraries.\n\nI'm {{sender_name}}, your contact for travel agency partnerships at HIWIN Co., Ltd. Our portfolio is centred in Osaka, with additional properties in Kyoto, Tokyo, Okinawa, Kobe and Nagoya. Alongside stays, our local network connects guests with dining, transfers and other services to complement their journeys.\n\nPlease find attached our English-language brochure and detailed rate sheet. Final rates and availability are confirmed for each enquiry.\n\nExplore our properties, local services, booking process and partnership options:\n{{partner_website}}\n\nWe would welcome the opportunity to support your Japan travel products. Please reply to this email or contact me on WhatsApp to discuss your guests, itineraries and how we can work together.\n\nIf a colleague handles Japan travel products or supplier partnerships, I would appreciate an introduction.\n\nBest regards,\n{{sender_name}}\nTravel Agency Partnerships | HIWIN Co., Ltd.\nEmail: {{sender_contact_email}}\nWhatsApp: {{sender_whatsapp_phone}} ({{sender_whatsapp}})\nCorporate website: https://hiwin-japan.co.jp/"
+  },
+  {
+    "id": "outreach-zh-TW",
+    "name": "繁體中文 · 台灣 ITF 合作邀約",
+    "language": "繁體中文（台灣）",
+    "subject": "Apartment Hotel 11 大阪住宿合作｜株式会社 HIWIN・ITF 台灣旅展邀約",
+    "body": "{{agency_name}} 團隊您好：\n\n我是 {{sender_name}}，負責株式会社 HIWIN 的旅行社合作。我們營運 Apartment Hotel 11，在日本共有 60 個據點、約 3,000 間客房，此次希望與貴公司洽談大阪住宿合作。\n\n大阪市內核心區的主推房源適合自由行、家庭及團體旅客：\n・雙人標準房參考合作價：日圓 5,000–7,000／人，含早餐盒外送。\n・房量充足：單棟至少 30 間，平均約 50–70 間，部分館 100 間以上。\n・房型寬敞：全部25㎡以上，新樓新房、設備齊全，適合家庭及多人入住。\n・團體便利：位置核心，交通方便且方便安排旅遊巴士上下客，停靠安排依館別確認。\n\n隨信附上繁體中文宣傳冊及詳細價格表，供您參考房源、房型與合作價格。\n實際報價及可供房量，會依日期、館別與團體需求確認。\n\n貴公司近期是否有大阪團體、家庭團或自由行住宿需求？歡迎回覆日期、入住人數及所需房間數，或透過 LINE 聯繫，我會協助確認房況及報價。\n\n住宿介紹、預訂流程及合作方式：\n{{partner_website}}\n\n我們將出席 2026 年 11 月 6 日至 9 日於台北南港展覽館 1 館舉行的「ITF 台灣國際旅展」。若貴公司也會到場，歡迎告知日期與方便的時段，以便安排現場交流。\n\n後續我會致電確認日本線合作窗口；若由其他同仁負責，也煩請協助轉交，謝謝。\n\n敬祝 商祺\n{{sender_name}}\n株式会社 HIWIN｜旅行社合作聯絡窗口\nEmail：{{sender_contact_email}}\nLINE：{{sender_line}}\n公司官網：https://hiwin-japan.co.jp/"
+  },
+  {
+    "id": "outreach-en-TW",
+    "name": "English · 台灣大阪合作與 ITF 邀約",
+    "language": "English",
+    "country": "台湾",
+    "subject": "Apartment Hotel 11 Osaka Accommodation Partnership | HIWIN Co., Ltd. – ITF Invitation",
+    "body": "Dear {{agency_name}} Team,\n\nI'm {{sender_name}}, and I handle travel agency partnerships at HIWIN Co., Ltd. We operate Apartment Hotel 11, with 60 properties and approximately 3,000 guest rooms in Japan, and would like to explore an Osaka accommodation partnership with your agency.\n\nOur featured properties in central Osaka cater to independent travellers, families and groups:\n・Partner rates: Indicative rates for a standard room for two guests are JPY 5,000–7,000 per person, including breakfast box delivery.\n・Room capacity: At least 30 rooms per building, averaging around 50–70, with some properties offering 100 or more.\n・Spacious rooms: All rooms are at least 25 m², in new buildings with newly furnished, fully equipped interiors, suitable for families and multiple guests.\n・Group convenience: Central locations with easy transport access and convenient tour coach pick-up and drop-off. Coach stopping arrangements are confirmed for each property.\n\nPlease find attached our English-language brochure and detailed rate sheet for your reference. Final rates and room availability are confirmed according to travel dates, property and group requirements.\n\nDoes your agency currently have any Osaka group, family or independent travel bookings requiring accommodation? Please reply with the dates, number of guests and rooms required, or contact me on LINE. I will help check availability and prepare a quotation.\n\nProperty information, booking process and partnership options:\n{{partner_website}}\n\nWe will attend the 2026 ITF Taipei International Travel Fair from November 6 to 9 at Taipei Nangang Exhibition Center, Hall 1. If your team will also be attending, please let us know your preferred date and time so we can arrange to meet.\n\nI will follow up by phone to reach the colleague responsible for Japan travel partnerships. If another colleague handles this, I would appreciate you forwarding this email to them.\n\nBest regards,\n{{sender_name}}\nTravel Agency Partnerships | HIWIN Co., Ltd.\nEmail: {{sender_contact_email}}\nLINE: {{sender_line}}\nCorporate website: https://hiwin-japan.co.jp/"
+  }
+]
