@@ -958,4 +958,57 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn('<strong>株式会社 HIWIN</strong>',full_names)
         self.assertIn('<strong>HIWIN Co., Ltd.</strong>',full_names)
 
+    def test_markdown_formats_preview_and_sent_html_with_clean_plain_text(self):
+        source='Dear {{agency_name}} Team,\n\n## 大阪住宿合作\n\n**重点房型**与*旅行需求*，***欢迎联系***。\n\nBest regards,\n{{sender_name}}'
+        batch=app.create_batch({'ids':['TEST-20261002-001'],'subject':'Formatting','body':source})
+        row=batch['messages'][0]
+        self.assertIn('<h2 ',row['html']);self.assertIn('>大阪住宿合作</h2>',row['html'])
+        self.assertIn('<strong>重点房型</strong>',row['html'])
+        self.assertIn('<em>旅行需求</em>',row['html'])
+        self.assertIn('<strong><em>欢迎联系</em></strong>',row['html'])
+        heading=next(part for part in row['body_sections'] if part['kind']=='heading')
+        self.assertEqual(heading['level'],2);self.assertEqual(heading['runs'],[{'text':'大阪住宿合作'}])
+        self.assertIn('大阪住宿合作\n\n重点房型与旅行需求，欢迎联系。',row['body'])
+        self.assertNotIn('**',row['body']);self.assertNotIn('## ',row['body'])
+        app.approve_batch(batch['id'],batch['digest']);smtp=FakeSMTP()
+        app.send_batch(batch['id'],smtp,pause=0)
+        self.assertEqual(smtp.sent[0].get_body(preferencelist=('plain',)).get_content().rstrip(),row['body'].rstrip())
+        self.assertIn('<strong>重点房型</strong>',smtp.sent[0].get_body(preferencelist=('html',)).get_content())
+        self.assertEqual(app.log_rows()[0]['body'],row['body'])
+
+    def test_manual_styles_on_links_preserve_url_and_both_styles(self):
+        body='**https://example.com/path?x=1&y=2** and *https://example.com/italic*\nhttps://example.com/a**b**\nname*tag@example.com'
+        rendered=app.email_html(body)
+        self.assertIn('<strong><a href="https://example.com/path?x=1&amp;y=2">',rendered)
+        self.assertIn('<em><a href="https://example.com/italic">',rendered)
+        self.assertIn('href="https://example.com/a**b**"',rendered)
+        self.assertIn('name*tag@example.com',rendered)
+        self.assertIn('https://example.com/a**b**',app.plain_text_body(body))
+
+    def test_nested_markdown_and_html_are_safe(self):
+        rendered=app.email_html('**bold with *italic* inside**\n**<img src=x onerror=alert(1)>**\n## <script>title</script>')
+        self.assertIn('<strong><em>italic</em></strong>',rendered)
+        self.assertNotIn('<img',rendered);self.assertNotIn('<script>',rendered)
+        self.assertIn('&lt;img src=x onerror=alert(1)&gt;',rendered)
+        self.assertIn('&lt;script&gt;title&lt;/script&gt;',rendered)
+
+    def test_unfinished_markup_and_heading_without_space_stay_literal(self):
+        source='**unfinished\n* spaced *\n##Not a heading\n#### Not supported'
+        self.assertEqual(app.plain_text_body(source),source)
+        self.assertNotIn('<strong>',app.email_html(source))
+        self.assertNotIn('<h',app.email_html(source).split('<body>')[1])
+
+    def test_formatted_template_persists_and_approval_freezes_rendered_content(self):
+        base=next(row for row in app.template_rows() if row['id']=='outreach-en')
+        saved=app.save_template({**base,'body':'## Osaka stays\n**Room options** and *family trips*','attachments':[]})
+        app.initialize()
+        stored=next(row for row in app.template_rows() if row['id']==saved['id'])
+        self.assertIn('**Room options**',stored['body'])
+        batch=self.template_preview(saved['id']);app.approve_batch(batch['id'],batch['digest'])
+        app.save_template({**stored,'body':'**New copy**','attachments':[]})
+        smtp=FakeSMTP();app.send_batch(batch['id'],smtp,pause=0)
+        rendered=smtp.sent[0].get_body(preferencelist=('html',)).get_content()
+        self.assertIn('<strong>Room options</strong>',rendered)
+        self.assertNotIn('New copy',rendered)
+
 if __name__=='__main__':unittest.main()

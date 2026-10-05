@@ -691,30 +691,66 @@ def body_sections(body, taiwan=False):
             parts.append({'kind':kind,'text':line.upper() if kind=='signature-name' else line})
     else:
         parts.append({'kind':'text','text':body})
+    formatted=[]
     for part in parts:
+        if part['kind']=='text':
+            position=0
+            for match in re.finditer(r'(?m)^(#{1,3})[ \t]+([^\n]+)',part['text']):
+                if match.start()>position:
+                    segment=part['text'][position:match.start()]
+                    if position:segment=segment.removeprefix('\n')
+                    formatted.append({'kind':'text','text':segment.removesuffix('\n')})
+                formatted.append({'kind':'heading','level':len(match[1]),'text':match[2]})
+                position=match.end()
+            if position<len(part['text']):
+                segment=part['text'][position:]
+                if position:segment=segment.removeprefix('\n')
+                if segment:formatted.append({'kind':'text','text':segment})
+        else:
+            formatted.append(part)
+    for part in formatted:
         if 'text' in part:
-            part['runs']=inline_runs(part['text'],part['kind']=='text')
-    return parts
+            part['runs']=inline_runs(part['text'],part['kind'] in ('text','heading'))
+    return formatted
 
-def inline_runs(text, emphasize=False):
-    # Match whole URLs and email addresses before brands so their text is intact.
-    pattern=r'https?://[^\s<>。，；、）\]]+|[A-Za-z0-9.!#$%&\x27*+/=?^_`{|}~-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}|株式会社[ \t]*HIWIN\b|\bHIWIN[ \t]+Co\.,[ \t]*Ltd\.|\b(?:Apartment[ \t]+Hotel[ \t]+11|HIWIN)\b'
+def inline_runs(text, emphasize=False, bold=False, italic=False):
+    # Only a small Markdown subset is accepted; all output remains escaped.
+    # URLs/emails are opaque so punctuation inside them never becomes formatting.
+    pattern=(r'(?P<strong_em>\*\*\*(?=\S)[^\n]+?(?<=\S)\*\*\*)'
+             r'|(?P<strong>\*\*(?=\S)[^\n]+?(?<=\S)\*\*)'
+             r'|(?P<em>(?<!\*)\*(?!\*)(?=\S)[^\n*]+?(?<=\S)\*(?!\*))'
+             r'|(?P<url>https?://[^\s<>。，；、）\]]+)'
+             r'|(?P<email>[A-Za-z0-9.!#$%&\x27*+/=?^_`{|}~-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})'
+             r'|(?P<brand>株式会社[ \t]*HIWIN\b|\bHIWIN[ \t]+Co\.,[ \t]*Ltd\.|\b(?:Apartment[ \t]+Hotel[ \t]+11|HIWIN)\b)')
     runs=[]
+    def literal(value, **extras):
+        if value:
+            run={'text':value,**extras}
+            if bold:run['bold']=True
+            if italic:run['italic']=True
+            runs.append(run)
     position=0
     for match in re.finditer(pattern,text,re.IGNORECASE):
-        if match.start()>position:
-            runs.append({'text':text[position:match.start()]})
-        value=match.group(0)
-        run={'text':value}
-        if value.lower().startswith(('https://','http://')):
-            run['url']=value
-        elif '@' not in value and emphasize:
-            run['bold']=True
-        runs.append(run)
+        literal(text[position:match.start()])
+        value=match.group(0);kind=match.lastgroup
+        if kind in ('strong_em','strong','em'):
+            width={'strong_em':3,'strong':2,'em':1}[kind]
+            runs.extend(inline_runs(value[width:-width],emphasize,
+                                    bold or kind in ('strong_em','strong'),
+                                    italic or kind in ('strong_em','em')))
+        elif kind=='url':
+            literal(value,url=value)
+        elif kind=='brand' and emphasize:
+            literal(value,bold=True)
+        else:
+            literal(value)
         position=match.end()
-    if position<len(text):
-        runs.append({'text':text[position:]})
+    literal(text[position:])
     return runs
+
+def plain_text_body(body):
+    body=re.sub(r'(?m)^#{1,3}[ \t]+','',body)
+    return ''.join(run['text'] for run in inline_runs(body))
 
 def email_html(body, signature=None, taiwan=False):
     sections=[]
@@ -728,12 +764,17 @@ def email_html(body, signature=None, taiwan=False):
             fragment=html.escape(run['text']).replace('\r\n','\n').replace('\r','\n').replace('\n','<br>')
             if run.get('url'):
                 fragment='<a href="'+html.escape(run['url'],quote=True)+'">'+fragment+'</a>'
-            elif run.get('bold'):
+            if run.get('italic'):
+                fragment='<em>'+fragment+'</em>'
+            if run.get('bold'):
                 fragment='<strong>'+fragment+'</strong>'
             fragments.append(fragment)
         linked=''.join(fragments)
         if part['kind']=='greeting':
             sections.append('<div style="font-size:16px;font-weight:400;line-height:1.7;margin:0 0 16px">'+linked+'</div>')
+        elif part['kind']=='heading':
+            level=part['level'];size={1:20,2:18,3:16}[level]
+            sections.append('<h'+str(level)+' style="font-size:'+str(size)+'px;font-weight:700;line-height:1.7;margin:10px 0 4px">'+linked+'</h'+str(level)+'>')
         elif part['kind'] in ('signature-name','contact'):
             size='16' if part['kind']=='signature-name' else '14'
             sections.append('<div style="font-size:'+size+'px;font-weight:700;line-height:1.7"><strong>'+linked+'</strong></div>')
@@ -804,7 +845,7 @@ def create_batch(data):
         rendered.append({'contact_id': r['id'], 'name': r['name'], 'recipient': address,
                          'message_type':'test' if test_recipient(r,all_contacts) else 'formal',
                          'recipient_timezone':LOCAL_TIMEZONES.get(r.get('website_country',r['country']),''),
-                         'country':r['country'],'subject': subject, 'body': body,'links':actual_links,
+                         'country':r['country'],'subject': subject, 'body': plain_text_body(body),'links':actual_links,
                          'body_sections':body_sections(body,is_taiwan_template(data)),
                          'partner_website':partner_website(r.get('website_country',r['country'])),
                          'html':email_html(body,signature,is_taiwan_template(data))})

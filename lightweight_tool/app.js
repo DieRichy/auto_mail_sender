@@ -46,11 +46,14 @@ function mailBody(message){
  const body=el('div');body.className='mail-body';
  for(const part of message.body_sections||[{kind:'text',text:message.body}]){
   if(part.kind==='divider'){body.append(el('hr'));continue;}
-  const bold=['signature-name','contact'].includes(part.kind),section=el(bold?'strong':'div');
-  section.className=part.kind==='greeting'?'mail-greeting':part.kind==='signature-name'?'mail-signature-name':part.kind==='contact'?'mail-contact':'mail-text';
+  const bold=['signature-name','contact'].includes(part.kind),section=el(part.kind==='heading'?'h'+part.level:bold?'strong':'div');
+  section.className=part.kind==='heading'?'mail-heading mail-heading-'+part.level:part.kind==='greeting'?'mail-greeting':part.kind==='signature-name'?'mail-signature-name':part.kind==='contact'?'mail-contact':'mail-text';
   for(const run of part.runs||[{text:part.text}]){
-   if(run.url){const link=el('a',run.text);link.href=run.url;link.target='_blank';link.rel='noopener';section.append(link);}
-   else section.append(run.bold?el('strong',run.text):document.createTextNode(run.text));
+   let fragment=document.createTextNode(run.text);
+   if(run.url){const link=el('a',run.text);link.href=run.url;link.target='_blank';link.rel='noopener';fragment=link;}
+   if(run.italic){const emphasis=el('em');emphasis.append(fragment);fragment=emphasis;}
+   if(run.bold){const strong=el('strong');strong.append(fragment);fragment=strong;}
+   section.append(fragment);
   }
   body.append(section);
  }
@@ -150,6 +153,37 @@ function updateSendMode(){
 async function refresh(){const previousSender=state&&state.sender;state=normalizeStateCountries(await api('state'));if(previousSender&&previousSender!==state.sender){invalidate();$('password').value='';notice('发件员工已切换为 '+state.sender+'，请重新预览确认。');}renderAccounts();renderContactConfig();$('sheetLink').hidden=!state.spreadsheet_url;if(state.spreadsheet_url)$('sheetLink').href=state.spreadsheet_url;$('mailBadge').textContent=state.mail_connected?'公司邮箱已连接':'公司邮箱未连接';$('sheetBadge').textContent=state.sheet_saved?'Sheet 已保存 · 自动恢复':state.sheet_configured?'Sheet 已配置 · 尚未保存':'Sheet 未连接';if(document.activeElement!==$('bridgeUrl'))$('bridgeUrl').value=state.bridge_url||'';$('bridgeSecret').placeholder=state.sheet_configured?'已有密钥，可留空；更换地址时重新填写':'首次填写同步密钥';$('restoreSheet').hidden=!state.sheet_store_error;$('sheetHelp').textContent=state.sheet_store_error||(state.sheet_saved?'连接配置已保存在本机 Mac 钥匙串，重新启动会自动恢复。':'部署地址与同步密钥保存到本机 Mac 钥匙串；下次启动自动恢复。');renderCountries();renderTemplateOptions();let removed=false;for(const ident of [...selected]){const contact=state.contacts.find(row=>row.id===ident);if(!contact||!contact.email){selected.delete(ident);removed=true;}}if(removed)invalidate();$('contactsSourceHint').textContent='联系人来源：Google Sheet「邮件跟踪」。修改机构名称、国家、收件邮箱后点击刷新；请保留同一机构的编号。'+(state.contacts_refreshed_at?' 上次刷新：'+new Date(state.contacts_refreshed_at).toLocaleString('zh-CN',{timeZone:'Asia/Tokyo'})+'（东京）':' 尚未从云端刷新。');renderContacts();renderRecords();if(!state.templates.some(item=>item.id===currentTemplate))loadTemplate(state.preferred_template);updateWebsiteHint();}
 function freezeCompose(value){sending=value;lockControls();lockMailControls();lockContactControls();$('inbox').disabled=value;$('sync').disabled=value;renderRecords();}
 for(const id of ['subject','body','links','templateName','templateLanguage'])$(id).addEventListener('input',markDirty);
+function replaceBodyRange(start,end,text,selectionStart=start,selectionEnd=selectionStart+text.length){
+ const body=$('body');body.setRangeText(text,start,end,'select');body.focus();body.setSelectionRange(selectionStart,selectionEnd);markDirty();
+}
+function toggleBodyInline(marker,placeholder){
+ if(composeLocked())return;
+ const body=$('body'),start=body.selectionStart,end=body.selectionEnd,width=marker.length,text=body.value.slice(start,end);
+ if(start===end){replaceBodyRange(start,end,marker+placeholder+marker,start+width,start+width+placeholder.length);return;}
+ const leftStars=body.value.slice(0,start).match(/\*+$/)?.[0].length||0,rightStars=body.value.slice(end).match(/^\*+/)?.[0].length||0;
+ const outerMatch=width===1?leftStars%2===1&&rightStars%2===1:leftStars>=width&&rightStars>=width;
+ if(outerMatch){replaceBodyRange(start-width,end+width,text,start-width,end-width);return;}
+ const lines=text.split('\n'),nonempty=lines.filter(line=>line.trim());
+ const unwrap=nonempty.length&&nonempty.every(line=>{const text=line.trim(),left=text.match(/^\*+/)?.[0].length||0,right=text.match(/\*+$/)?.[0].length||0;return text.length>width*2&&(width===1?left%2===1&&right%2===1:left>=width&&right>=width);});
+ const formatted=lines.map(line=>line.replace(/^(\s*)(.*?)(\s*)$/,(_,leading,content,trailing)=>content?leading+(unwrap?content.slice(width,-width):marker+content+marker)+trailing:line)).join('\n');
+ if(lines.length===1&&!unwrap){const leading=text.length-text.trimStart().length;replaceBodyRange(start,end,formatted,start+leading+width,start+formatted.length-(text.length-text.trimEnd().length)-width);}
+ else replaceBodyRange(start,end,formatted);
+}
+function toggleBodyHeading(){
+ if(composeLocked())return;
+ const body=$('body'),start=body.value.slice(0,body.selectionStart).lastIndexOf('\n')+1;
+ const lineEnd=body.value.indexOf('\n',Math.max(body.selectionStart,body.selectionEnd-1)),end=lineEnd<0?body.value.length:lineEnd;
+ const lines=body.value.slice(start,end).split('\n'),nonempty=lines.filter(line=>line.trim());
+ const unwrap=nonempty.length&&nonempty.every(line=>/^##[ \t]+/.test(line));
+ const formatted=lines.map(line=>line.trim()?(unwrap?line.replace(/^##[ \t]+/,''):'## '+line.replace(/^#{1,3}[ \t]+/,'')):line).join('\n');
+ if(!nonempty.length)replaceBodyRange(start,end,'## 标题文字',start+3,start+7);
+ else replaceBodyRange(start,end,formatted);
+}
+for(const id of ['formatBold','formatItalic','formatHeading'])$(id).onmousedown=event=>event.preventDefault();
+$('formatBold').onclick=()=>toggleBodyInline('**','加粗文字');
+$('formatItalic').onclick=()=>toggleBodyInline('*','斜体文字');
+$('formatHeading').onclick=toggleBodyHeading;
+$('body').onkeydown=event=>{if((event.metaKey||event.ctrlKey)&&!event.altKey&&!event.shiftKey&&['b','i'].includes(event.key.toLowerCase())){event.preventDefault();event.key.toLowerCase()==='b'?toggleBodyInline('**','加粗文字'):toggleBodyInline('*','斜体文字');}};
 $('template').onchange=()=>{stashDraft();loadTemplate($('template').value);};$('contactCountry').onchange=()=>{$('contactCountry').classList.toggle('test-filter',$('contactCountry').value==='测试');loadCountryTemplate($('contactCountry').value);renderContacts();};$('search').oninput=renderContacts;$('recordCountry').onchange=$('recordSender').onchange=$('recordType').onchange=()=>{recordPage=1;recordSelected.clear();renderRecords();};$('recordPageSize').onchange=()=>{recordPage=1;renderRecords();};$('recordPrev').onclick=()=>{recordPage--;renderRecords();};$('recordNext').onclick=()=>{recordPage++;renderRecords();};$('templateCountry').onchange=()=>{markDirty();updateWebsiteHint();};
 $('onlyWithEmail').onchange=renderContacts;
 $('selectVisible').onclick=()=>{const rows=visibleContacts().filter(row=>row.email);const combined=new Set([...selected,...rows.map(row=>row.id)]);if(combined.size>30)return notice('当前选择合计超过 30 家，请缩小筛选范围或逐家勾选。');for(const row of rows)selected.add(row.id);invalidate();renderContacts();};$('clearSelection').onclick=()=>{selected.clear();invalidate();renderContacts();};
