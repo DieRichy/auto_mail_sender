@@ -864,7 +864,7 @@ class WorkflowTests(unittest.TestCase):
     def test_taiwan_english_has_attachments_copy_line_and_english_signature(self):
         batch=self.template_preview('outreach-en-TW')
         message=batch['messages'][0]
-        self.assertIn('English-language brochure and detailed rate sheet',message['body'])
+        self.assertIn('our brochure and detailed rate sheet',message['body'])
         self.assertIn('follow up by phone',message['body'])
         self.assertIn('https://hiwin-partners.com/tw',message['body'])
         self.assertIn('Best regards,',message['body'])
