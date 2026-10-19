@@ -2,6 +2,8 @@
 /*
 !/.gitignore
 !/README.md
+!/CLAUDE.md
+!/docs/
 !/.github/
 !/lightweight_tool/
 /lightweight_tool/*
