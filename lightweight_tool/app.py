@@ -197,7 +197,8 @@ def partner_website(country):
 
 def contact_variables(value):
     value = re.sub(r'https://hiwin-partners\.cnai5002\.chatgpt\.site/?', '{{partner_website}}', value)
-    value = re.sub(r'https?://hiwin-partners\.com(?:/(?:tw|jp|en|my|th|id|ph))?/?(?![A-Za-z0-9/_-])', '{{partner_website}}', value)
+    # Only bare homepages; subpages and ?query/#fragment (UTM tracking) links stay as written.
+    value = re.sub(r'https?://hiwin-partners\.com(?:/(?:tw|jp|en|my|th|id|ph))?/?(?![A-Za-z0-9/_?#-])', '{{partner_website}}', value)
     phone=DEFAULT_WHATSAPP.get('phone','')
     if phone:
         value = value.replace(phone, '{{sender_whatsapp_phone}}')

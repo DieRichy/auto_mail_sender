@@ -1270,6 +1270,19 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(template['links'],'Partner | {{partner_website}}')
         self.assertEqual(app.contact_variables('See http://hiwin-partners.com and https://hiwin-partners.com/'),'See {{partner_website}} and {{partner_website}}')
 
+    def test_partner_url_migration_keeps_utm_homepage_links(self):
+        utm='https://hiwin-partners.com/tw/?utm_source=email&utm_medium=outreach&utm_campaign=tw_agency_2026q4'
+        bare_utm='https://hiwin-partners.com?utm_source=email&utm_medium=outreach&utm_campaign=tw_agency_2026q4'
+        with app.db() as c:
+            c.execute("UPDATE templates SET body=?,links=? WHERE id='outreach-en'",
+                      ('[合作方案]('+utm+') or https://hiwin-partners.com/tw/','Home | '+utm+'\nPartner | https://hiwin-partners.com/tw/'))
+        app.initialize()
+        template=next(row for row in app.template_rows() if row['id']=='outreach-en')
+        self.assertEqual(template['body'],'[合作方案]('+utm+') or {{partner_website}}')
+        self.assertEqual(template['links'],'Home | '+utm+'\nPartner | {{partner_website}}')
+        self.assertEqual(app.contact_variables(bare_utm),bare_utm)
+        self.assertEqual(app.contact_variables('https://hiwin-partners.com/tw/'),'{{partner_website}}')
+
     def test_contact_qr_upload_is_served_and_used_as_inline_image(self):
         content=(app.ROOT/'assets'/'hiwin-whatsapp.png').read_bytes()
         file='contact-qr-'+app.hashlib.sha256(content).hexdigest()+'.png'
