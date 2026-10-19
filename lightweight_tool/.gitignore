@@ -5,6 +5,8 @@ uploads/
 backups/
 assets/
 contacts.json
+contact_groups.json
+contact_metadata.json
 sender_contacts.json
 local_config.json
 .env*

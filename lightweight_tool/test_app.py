@@ -46,6 +46,20 @@ class WorkflowTests(unittest.TestCase):
         if auto: message['Auto-Submitted']='auto-replied'
         message.set_content('Response'); return message
 
+    def delivery_notice(self, sent, code='5.1.1', recipient='workflow-test@example.com', reference='header'):
+        headers=('MIME-Version: 1.0\r\nFrom: Mailer-Daemon <mailer-daemon@example.com>\r\n'
+                 'Subject: Returned mail\r\nMessage-ID: <notice-'+sent['Message-ID'][1:-1]+'-'+code+'>\r\n'
+                 'Content-Type: multipart/report; report-type=delivery-status; boundary="dsn"\r\n')
+        if reference=='header':headers+='References: '+sent['Message-ID']+'\r\n'
+        text='Delivery failed'
+        if reference=='text':text+='\r\nOriginal-Message-ID: '+sent['Message-ID']
+        raw=(headers+'\r\n--dsn\r\nContent-Type: text/plain\r\n\r\n'+text+
+             '\r\n--dsn\r\nContent-Type: message/delivery-status\r\n\r\nReporting-MTA: dns; example.com\r\n\r\n'
+             'Final-Recipient: rfc822; '+recipient+'\r\nAction: failed\r\nStatus: '+code+
+             '\r\nDiagnostic-Code: smtp; failed '+code+'\r\n').encode()
+        if reference=='attachment':raw+=b'\r\n--dsn\r\nContent-Type: message/rfc822\r\n\r\n'+sent.as_bytes()
+        return raw+b'\r\n--dsn--\r\n'
+
     def http_handler(self, host, origin=None):
         handler=app.Handler.__new__(app.Handler)
         handler.server=Mock(server_port=8765)
@@ -191,11 +205,15 @@ class WorkflowTests(unittest.TestCase):
         with self.assertRaises(ValueError):app.delete_record(row['id'])
         self.assertEqual(len(app.log_rows()),1)
 
-    def test_deleted_records_still_count_towards_daily_limit(self):
+    def test_deleted_records_do_not_limit_daily_sends(self):
         self.sent();app.delete_record(app.log_rows()[0]['id'])
         with app.db() as c:
             c.execute("INSERT INTO messages(id,batch_id,contact_id,name,recipient,subject,body,status,sent_at) SELECT '<prior-'||n||'@example.com>','old','old','Test','other'||n||'@example.com','x','x','服务器已接受',? FROM (WITH RECURSIVE nums(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM nums WHERE n<29) SELECT n FROM nums)",(app.now(),))
-        with self.assertRaises(ValueError):app.send_batch(self.approved()['id'],FakeSMTP(),pause=0)
+        transport=FakeSMTP()
+        app.send_batch(self.approved()['id'],transport,pause=0)
+        self.assertEqual(len(transport.sent),1)
+        with app.db() as c:
+            self.assertEqual(c.execute("SELECT COUNT(*) FROM messages WHERE status='服务器已接受'").fetchone()[0],31)
 
     def test_bulk_delete_removes_only_selected_and_is_atomic(self):
         for _ in range(3):self.sent()
@@ -332,12 +350,50 @@ class WorkflowTests(unittest.TestCase):
         self.run_plans('2030-02-01T13:01:00+09:00',transport)
         self.assertEqual(app.log_rows()[0]['status'],'结果待核对')
 
-    def test_schedule_reservations_respect_daily_limit(self):
+    def test_schedule_reservations_do_not_limit_daily_sends(self):
         with patch.object(app,'now',return_value='2030-02-01T12:00:00+09:00'):
             self.planned()
             with app.db() as c:
                 c.execute("INSERT INTO messages(id,batch_id,contact_id,name,recipient,subject,body,status,sent_at) SELECT '<prior-'||n||'@example.com>','old','old','Test','other'||n||'@example.com','x','x','服务器已接受',? FROM (WITH RECURSIVE nums(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM nums WHERE n<29) SELECT n FROM nums)",('2030-02-01T12:00:00+09:00',))
-            with self.assertRaises(ValueError):self.planned()
+            self.planned()
+        transport=self.run_plans('2030-02-01T13:00:00+09:00')
+        self.assertEqual(len(transport.sent),2)
+        self.assertEqual(len(app.log_rows()),31)
+
+    def bulk_approved(self, count=35):
+        ids=[app.add_contact({'name':'Agency '+str(index),'email':'agency'+str(index)+'@example.com','country':'新加坡'})['id'] for index in range(count)]
+        data={'ids':ids,'subject':'Partnership','body':'Hello {{agency_name}}'}
+        batch=app.create_batch(data)
+        app.approve_batch(batch['id'],batch['digest'])
+        return batch,data
+
+    def test_large_batches_and_multiple_immediate_sends_have_no_daily_limit(self):
+        with patch.object(app,'now',return_value='2030-02-01T12:00:00+09:00'):
+            batch,data=self.bulk_approved()
+            self.assertEqual(len(batch['messages']),35)
+            transport=FakeSMTP()
+            app.send_batch(batch['id'],transport,pause=0,confirmation=app.check_send(batch['id'])['digest'])
+            second=app.create_batch(data)
+            app.approve_batch(second['id'],second['digest'])
+            review=app.check_send(second['id'])
+            self.assertTrue(all(row['previous_count']==1 for row in review['recipients']))
+            app.send_batch(second['id'],transport,pause=0,confirmation=review['digest'])
+        self.assertEqual(len(transport.sent),70)
+        self.assertTrue(all(row['status']=='服务器已接受' for row in app.log_rows()))
+
+    def test_large_scheduled_batches_have_no_batch_or_daily_limit(self):
+        app.SETTINGS['password']='session-test-only'
+        app.MAIL_SESSIONS[app.SETTINGS['sender']]='session-test-only'
+        with patch.object(app,'now',return_value='2030-02-01T12:00:00+09:00'):
+            batch,data=self.bulk_approved()
+            for planned_batch in (batch,app.create_batch(data)):
+                if planned_batch is not batch:app.approve_batch(planned_batch['id'],planned_batch['digest'])
+                review=app.check_send(planned_batch['id'],'2030-02-01T13:00')
+                result=app.schedule_batch(planned_batch['id'],'2030-02-01T13:00',review['digest'])
+                self.assertEqual(result['count'],35)
+        transport=self.run_plans('2030-02-01T13:00:00+09:00')
+        self.assertEqual(len(transport.sent),70)
+        self.assertTrue(all(row['status']=='服务器已接受' for row in app.log_rows()))
 
     def test_record_types_and_recipient_timezones_are_frozen(self):
         self.sent();self.assertEqual(app.log_rows()[0]['message_type'],'test')
@@ -360,11 +416,14 @@ class WorkflowTests(unittest.TestCase):
             app.approve_batch(batch['id'],batch['digest']);transport=FakeSMTP()
             app.send_batch(batch['id'],transport,pause=0);self.assertEqual(len(transport.sent),1)
         self.assertEqual(len(app.log_rows()),2)
-    def test_test_resends_still_count_towards_daily_limit(self):
+    def test_test_resends_have_no_daily_limit(self):
         self.sent()
         with app.db() as c:
             c.execute("INSERT INTO messages(id,batch_id,contact_id,name,recipient,subject,body,status,sent_at) SELECT '<prior-'||n||'@example.com>','old','old','Test','other'||n||'@example.com','x','x','服务器已接受',? FROM (WITH RECURSIVE nums(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM nums WHERE n<29) SELECT n FROM nums)",(app.now(),))
-        with self.assertRaises(ValueError):app.send_batch(self.approved()['id'],FakeSMTP(),pause=0)
+        transport=FakeSMTP()
+        app.send_batch(self.approved()['id'],transport,pause=0)
+        self.assertEqual(len(transport.sent),1)
+        self.assertEqual(len(app.log_rows()),31)
     def test_ambiguous_delivery_not_retried(self):
         batch=self.approved(); app.send_batch(batch['id'],FakeSMTP(TimeoutError()),pause=0)
         self.assertEqual(app.log_rows()[0]['status'],'结果待核对')
@@ -390,11 +449,205 @@ class WorkflowTests(unittest.TestCase):
         sent=self.sent()
         raw=('MIME-Version: 1.0\r\nContent-Type: multipart/report; report-type=delivery-status; boundary="dsn"\r\nReferences: '+sent['Message-ID']+'\r\n\r\n--dsn\r\nContent-Type: text/plain\r\n\r\nDelivery failed\r\n--dsn\r\nContent-Type: message/delivery-status\r\n\r\nReporting-MTA: dns; example.com\r\n\r\nFinal-Recipient: rfc822; workflow-test@example.com\r\nAction: failed\r\nStatus: 5.1.1\r\n\r\n--dsn--\r\n').encode()
         app.record_incoming(raw);self.assertEqual(app.log_rows()[0]['status'],'退信')
+
+    def test_delivery_failure_categories_only_stop_invalid_addresses(self):
+        for code,word,stop in [('5.1.1','不存在',True),('4.2.2','邮箱满',False),('5.2.2','邮箱满',False),('5.5.0','服务器',False)]:
+            with self.subTest(code=code):
+                sent=self.sent();self.assertEqual(app.record_incoming(self.delivery_notice(sent,code)),1)
+                row=next(row for row in app.log_rows() if row['id']==sent['Message-ID'])
+                self.assertEqual(row['reply_status'],'退信');self.assertIn(word,row['next_step']);self.assertIn(code,row['error'])
+                with app.db() as c:
+                    self.assertEqual(bool(c.execute('SELECT 1 FROM stops WHERE email=?',(row['recipient'],)).fetchone()),stop)
+                    c.execute('DELETE FROM stops')
+
+    def test_forward_failure_matches_attached_original_and_keeps_original_address(self):
+        sent=self.sent()
+        self.assertEqual(app.record_incoming(self.delivery_notice(sent,'5.7.26','forwarded@example.net','attachment')),1)
+        row=app.log_rows()[0]
+        self.assertEqual(row['status'],'服务器已接受');self.assertEqual(row['reply_status'],'投递通知')
+        self.assertIn('转投',row['next_step']);self.assertIn('forwarded@example.net',row['error'])
+        with app.db() as c:self.assertEqual(c.execute('SELECT count(*) FROM stops').fetchone()[0],0)
+
+    def test_delivery_notice_matches_original_id_in_explanatory_text(self):
+        sent=self.sent()
+        self.assertEqual(app.record_incoming(self.delivery_notice(sent,reference='text')),1)
+        self.assertEqual(app.log_rows()[0]['reply_status'],'退信')
+
+    def test_unstructured_daemon_notice_is_not_a_human_reply(self):
+        message=self.reply(self.sent(),sender='mailer-daemon@example.com');message.replace_header('Subject','Delivery failure')
+        self.assertEqual(app.record_incoming(message.as_bytes()),1)
+        self.assertEqual(app.log_rows()[0]['reply_status'],'投递通知')
+        with app.db() as c:self.assertEqual(c.execute('SELECT count(*) FROM stops').fetchone()[0],0)
+
+    def test_message_id_deduplicates_moved_mail_with_changed_headers(self):
+        message=self.reply(self.sent());message['Message-ID']='<incoming-unique@example.com>'
+        self.assertEqual(app.record_incoming(message.as_bytes()),1)
+        changed=b'Received: by archive.example.com\r\n'+message.as_bytes()
+        self.assertEqual(app.record_incoming(changed),0)
+        with app.db() as c:self.assertEqual(c.execute('SELECT count(*) FROM inbox_events').fetchone()[0],1)
+
+    def test_rescan_preserves_manual_audit_details_and_synced_state(self):
+        sent=self.sent()
+        with app.db() as c:
+            c.execute("UPDATE messages SET status='退信',reply_status='退信',reply_at='2026-10-07T11:19:02+09:00',next_step='人工核对：核实新地址',error='人工核对原始退信',sheet_synced=1")
+        before=app.log_rows()[0]
+        self.assertEqual(app.record_incoming(self.delivery_notice(sent)),0)
+        self.assertEqual(app.log_rows()[0],before)
+
+    def test_human_reply_takes_priority_over_later_bounce(self):
+        sent=self.sent();app.record_incoming(self.reply(sent).as_bytes());before=app.log_rows()[0]
+        self.assertEqual(app.record_incoming(self.delivery_notice(sent)),0)
+        self.assertEqual(app.log_rows()[0],before)
+
+    def test_list_folders_preserves_imap_names_and_excludes_outgoing(self):
+        encoded=b'&'+base64.b64encode('削除済み'.encode('utf-16-be')).rstrip(b'=').replace(b'/',b',')+b'-'
+        client=Mock()
+        client.list.return_value=('OK',[
+            b'(\\HasNoChildren) "/" "INBOX"',b'(\\NoSelect) "/" "Root"',
+            b'(\\Sent) "/" "Custom outgoing"',b'(\\Drafts) "/" "Custom drafts"',
+            b'() "/" "Root/Sent Items"',b'() "/" "Drafts"',
+            b'(\\Trash) "/" "Deleted Items"',b'() "/" "Archive"',b'() "/" "Junk"',
+            b'() "/" "'+encoded+b'"',(b'() "/" {13}',b'Custom Folder')])
+        folders,warnings=app.incoming_folders(client)
+        self.assertEqual(warnings,[])
+        self.assertEqual([folder['name'] for folder in folders],['INBOX','Deleted Items','Archive','Junk','削除済み','Custom Folder'])
+        self.assertEqual(folders[1]['mailbox'],b'"Deleted Items"');self.assertEqual(folders[-1]['mailbox'],b'"Custom Folder"')
+
+    def test_imap_batches_readonly_mail_and_reports_partial_scan_and_sync(self):
+        message=self.reply(self.sent());message['Message-ID']='<scan-unique@example.com>';raw=message.as_bytes()
+        client=Mock()
+        client.list.return_value=('OK',[b'() "/" "INBOX"',b'(\\Trash) "/" "Deleted Items"',b'() "/" "Archive"',b'(\\Sent) "/" "Sent"'])
+        client.select.side_effect=[('OK',[]),('OK',[]),('NO',[])]
+        client.uid.side_effect=[('OK',[b'1 2 3 4 5 6 7 8 9 10 11']),
+                                ('OK',[(str(i).encode(),raw) for i in range(1,11)]),('OK',[(b'11',raw)]),
+                                ('OK',[b'2']),('OK',[(b'2',b'Received: by archive\r\n'+raw)])]
+        app.SETTINGS['password']='dummy-password'
+        with patch.object(app.imaplib,'IMAP4_SSL',return_value=client),patch.object(app,'sync_sheet',return_value={'ok':False,'error':'Sheet offline'}):
+            result=app.check_inbox()
+        self.assertFalse(result['complete']);self.assertEqual(result['scanned'],12);self.assertEqual(result['fetched'],12);self.assertEqual(result['matched'],1)
+        self.assertEqual(result['sheet_sync']['error'],'Sheet offline');self.assertIn('Archive',result['warnings'][0])
+        self.assertEqual([call.args[0] for call in client.select.call_args_list],['INBOX',b'"Deleted Items"',b'"Archive"'])
+        self.assertTrue(all(call.kwargs=={'readonly':True} for call in client.select.call_args_list))
+        fetches=[call.args for call in client.uid.call_args_list if call.args[0]=='fetch']
+        self.assertEqual(fetches,[('fetch',b'1,2,3,4,5,6,7,8,9,10','(UID BODY.PEEK[])'),('fetch',b'11','(UID BODY.PEEK[])'),('fetch',b'2','(UID BODY.PEEK[])')])
+        client.logout.assert_called_once();client.store.assert_not_called();client.expunge.assert_not_called()
+
+    def test_folder_list_failure_falls_back_with_warning(self):
+        client=Mock();client.list.side_effect=app.imaplib.IMAP4.error('not supported')
+        client.select.return_value=('OK',[]);client.uid.return_value=('OK',[b''])
+        app.SETTINGS['password']='dummy-password'
+        with patch.object(app.imaplib,'IMAP4_SSL',return_value=client):result=app.check_inbox()
+        self.assertFalse(result['complete']);self.assertEqual(result['fetched'],0);self.assertIn('仅检查收件箱',result['warnings'][0])
+        client.select.assert_called_once_with('INBOX',readonly=True)
+
+    def test_imap_incomplete_fetch_is_reported_without_losing_successful_matches(self):
+        raw=self.reply(self.sent()).as_bytes();client=Mock();client.list.return_value=('OK',[])
+        client.select.return_value=('OK',[]);client.uid.side_effect=[('OK',[b'1 2']),('OK',[(b'1',raw)])]
+        app.SETTINGS['password']='dummy-password'
+        with patch.object(app.imaplib,'IMAP4_SSL',return_value=client):result=app.check_inbox()
+        self.assertFalse(result['complete']);self.assertFalse(result['folders'][0]['ok']);self.assertEqual(result['matched'],1)
+        self.assertEqual(result['fetched'],1);self.assertIn('未完整返回',result['warnings'][0])
+
+    def test_imap_auth_failure_does_not_scan_and_logs_out(self):
+        client=Mock();client.login.side_effect=app.imaplib.IMAP4.error('private server diagnostic')
+        app.SETTINGS['password']='dummy-password'
+        with patch.object(app.imaplib,'IMAP4_SSL',return_value=client),self.assertRaisesRegex(ValueError,'IMAP 登录失败'):
+            app.check_inbox()
+        client.list.assert_not_called();client.logout.assert_called_once()
     def test_sheet_failure_does_not_resend(self):
         smtp=FakeSMTP();batch=self.approved()
         with patch.object(app,'sync_sheet',return_value={'ok':False}): app.send_batch(batch['id'],smtp,pause=0)
         self.assertEqual(len(smtp.sent),1);self.assertEqual(app.log_rows()[0]['status'],'服务器已接受')
         self.assertEqual(app.log_rows()[0]['sheet_synced'],0)
+
+    def seed_sync_rows(self,count,body='合作邀約'*1000):
+        with app.db() as c:
+            c.executemany('INSERT INTO messages(id,batch_id,contact_id,name,recipient,subject,body,status,sent_at) VALUES(?,?,?,?,?,?,?,?,?)',
+                          [(f'<sync-{index}@example.com>','sync-batch',str(index),'機構 '+str(index),f'agency{index}@example.com','合作邀約',body,'服务器已接受',app.now()) for index in range(count)])
+        app.SETTINGS.update(bridge_url='https://script.google.com/macros/s/TEST/exec',bridge_secret='x'*64)
+
+    def test_large_sheet_sync_chunks_signed_utf8_requests_and_keeps_full_bodies(self):
+        self.seed_sync_rows(295)
+        sent=[]
+        def bridge(payload):
+            request=app.sheet_bridge_request_data(payload)
+            self.assertLessEqual(len(request),app.MAX_SHEET_REQUEST_BYTES)
+            self.assertLessEqual(len(payload['rows']),app.MAX_SHEET_CHUNK_ROWS)
+            sent.extend(payload['rows'])
+            return {'ok':True,'count':len(payload['rows'])}
+        with patch.object(app,'sheet_bridge_request',side_effect=bridge) as requests:
+            result=app.sync_sheet()
+        self.assertTrue(result['ok']);self.assertEqual(result['count'],295)
+        self.assertGreater(requests.call_count,1)
+        self.assertEqual(len({row['id'] for row in sent}),295)
+        self.assertTrue(all(row['body']=='合作邀約'*1000 for row in sent))
+        self.assertTrue(all(row['sheet_synced'] for row in app.log_rows()))
+
+    def test_sheet_sync_partial_failure_retries_only_unacknowledged_chunks(self):
+        self.seed_sync_rows(5,body='Hello')
+        with patch.object(app,'MAX_SHEET_CHUNK_ROWS',2),patch.object(app,'sheet_bridge_request',side_effect=[{'ok':True,'count':2},TimeoutError()]):
+            first=app.sync_sheet()
+        self.assertFalse(first['ok']);self.assertEqual(first['count'],2)
+        self.assertEqual(sum(row['sheet_synced'] for row in app.log_rows()),2)
+        retried=[]
+        def bridge(payload):
+            retried.extend(row['id'] for row in payload['rows'])
+            return {'ok':True,'count':len(payload['rows'])}
+        with patch.object(app,'sheet_bridge_request',side_effect=bridge):
+            result=app.sync_sheet()
+        self.assertEqual(result['count'],3);self.assertEqual(len(set(retried)),3)
+        self.assertTrue(all(row['sheet_synced'] for row in app.log_rows()))
+
+    def test_sheet_sync_bad_acknowledgment_leaves_records_pending(self):
+        self.seed_sync_rows(2,body='Hello')
+        with patch.object(app,'sheet_bridge_request',return_value={'ok':True,'count':1}):
+            result=app.sync_sheet()
+        self.assertFalse(result['ok']);self.assertEqual(result['count'],0)
+        self.assertTrue(all(not row['sheet_synced'] for row in app.log_rows()))
+
+    def test_sheet_sync_does_not_acknowledge_concurrent_reply_changes(self):
+        self.seed_sync_rows(1,body='Hello')
+        def bridge(payload):
+            with app.db() as c:c.execute("UPDATE messages SET reply_status='已回复',reply_at=?",(app.now(),))
+            return {'ok':True,'count':1}
+        with patch.object(app,'sheet_bridge_request',side_effect=bridge):result=app.sync_sheet()
+        self.assertEqual(result['count'],0);self.assertFalse(app.log_rows()[0]['sheet_synced'])
+
+    def test_sheet_probe_still_calls_bridge_with_no_records(self):
+        app.SETTINGS.update(bridge_url='https://script.google.com/macros/s/TEST/exec',bridge_secret='x'*64)
+        with patch.object(app,'sheet_bridge_request',return_value={'ok':True,'count':0}) as bridge:
+            self.assertTrue(app.sync_sheet(probe=True)['ok'])
+        bridge.assert_called_once_with({'rows':[]})
+
+    def test_send_progress_counts_success_failure_and_unsent_records(self):
+        batch,_=self.bulk_approved(count=3)
+        snapshots=[]
+        def send(message):
+            snapshots.append(app.send_progress(batch['id']))
+            if len(snapshots)==2:raise smtplib.SMTPDataError(550,b'rejected')
+            return {}
+        transport=Mock();transport.send_message.side_effect=send
+        app.send_batch(batch['id'],transport,pause=0,confirmation=app.check_send(batch['id'])['digest'])
+        self.assertEqual(snapshots[0]['processed'],0)
+        self.assertEqual(snapshots[1]['processed'],1)
+        self.assertTrue(snapshots[1]['current_name'])
+        result=app.send_progress(batch['id'])
+        self.assertEqual((result['status'],result['processed'],result['total'],result['accepted'],result['failed'],result['remaining']),('needs_review',2,3,1,1,1))
+
+    def test_progress_endpoint_is_authenticated_and_available_while_send_lock_is_held(self):
+        import threading
+        batch=self.approved()
+        result=[]
+        with app.LOCK:
+            reader=threading.Thread(target=lambda:result.append(app.send_progress(batch['id'])))
+            reader.start();reader.join(timeout=1)
+            self.assertFalse(reader.is_alive())
+        self.assertEqual(result[0]['total'],1)
+        handler=self.http_handler('localhost:8765')
+        handler.path='/api/send-progress?id='+batch['id'];handler.do_GET()
+        self.assertEqual(handler.respond.call_args.args[0]['progress']['batch_id'],batch['id'])
+        del handler.headers['X-Local-Token'];handler.do_GET()
+        handler.respond.assert_called_with({'error':'Forbidden'},403)
     def test_invalid_variables_and_missing_email(self):
         with self.assertRaises(ValueError):app.create_batch({'ids':['TEST-20261002-001'],'subject':'{{unknown}}','body':'x'})
         with self.assertRaises(ValueError):app.create_batch({'ids':['MY-012'],'subject':'x','body':'x'})
@@ -440,6 +693,85 @@ class WorkflowTests(unittest.TestCase):
     def cloud_contacts(self, rows):
         return {'ok':True,'contacts':rows,'source_sheet':'邮件跟踪','spreadsheet_id':app.SPREADSHEET}
 
+    def test_contact_groups_without_local_config_keeps_taipei(self):
+        state=app.app_state()
+        self.assertEqual(state['contact_groups_error'],'')
+        group,=state['contact_groups']
+        self.assertEqual((group['id'],group['country'],group['total_count']),('taipei-179','台湾',179))
+        self.assertEqual(group['contact_ids'][0],'TW-001')
+        self.assertEqual(group['contact_ids'][-1],'TW-179')
+        self.assertEqual(group['loaded_count'],0)
+
+    def test_contact_groups_track_ids_across_refresh_and_do_not_restore_deleted(self):
+        (app.ROOT/'contact_groups.json').write_text(json.dumps({'groups':[{
+            'id':'itf-2026','name':'ITF Taiwan 2026 参展商',
+            'contact_ids':['SG-007','TW-001','ITF-JP-001','missing-id']}]}),encoding='utf-8')
+        rows=[{'id':'TW-001','name':'Taiwan Exhibitor','country':'台湾','email':''},
+              {'id':'ITF-JP-001','name':'Japan Exhibitor','country':'日本','email':'jp@example.com'},
+              {'id':'SG-007','name':'Singapore Exhibitor','country':'新加坡','email':'sg@example.com'}]
+        with patch.object(app,'sheet_bridge_request',return_value=self.cloud_contacts(rows)):
+            app.refresh_sheet_contacts()
+        group=app.app_state()['contact_groups'][1]
+        self.assertEqual((group['country'],group['total_count'],group['loaded_count']),('',4,3))
+        original_ids=group['contact_ids'][:]
+        rows.reverse();rows[0]['email']='new-sg@example.com';rows[0]['name']='Renamed Exhibitor'
+        with patch.object(app,'sheet_bridge_request',return_value=self.cloud_contacts(rows)):
+            app.refresh_sheet_contacts()
+        self.assertEqual(app.app_state()['contact_groups'][1]['contact_ids'],original_ids)
+        app.delete_contacts(['SG-007'])
+        with patch.object(app,'sheet_bridge_request',return_value=self.cloud_contacts(rows)):
+            app.refresh_sheet_contacts()
+        state=app.app_state()
+        self.assertEqual(state['contact_groups'][1]['loaded_count'],2)
+        self.assertNotIn('SG-007',{row['id'] for row in state['contacts']})
+        self.assertNotIn('missing-id',{row['id'] for row in state['contacts']})
+
+    def test_contact_groups_invalid_config_fails_atomically_and_reports_issue(self):
+        valid={'id':'itf-2026','name':'ITF','contact_ids':['SG-007']}
+        invalid=[[],{'groups':{}},{'groups':[None]},
+                 {'groups':[valid,{**valid,'id':'taipei-179'}]},
+                 {'groups':[valid,valid]},
+                 {'groups':[{**valid,'name':' '}]},
+                 {'groups':[{**valid,'contact_ids':['SG-007','SG-007']}]},
+                 {'groups':[{**valid,'contact_ids':[' SG-007']}]},
+                 {'groups':[{**valid,'contact_ids':[None]}]}]
+        path=app.ROOT/'contact_groups.json'
+        for value in invalid:
+            with self.subTest(config=value):
+                path.write_text(json.dumps(value),encoding='utf-8')
+                state=app.app_state()
+                self.assertEqual([group['id'] for group in state['contact_groups']],['taipei-179'])
+                self.assertIn('快捷名单配置未加载',state['contact_groups_error'])
+        path.write_text('{broken',encoding='utf-8')
+        self.assertIn('JSON 格式错误',app.app_state()['contact_groups_error'])
+        path.write_bytes(b'\xff')
+        self.assertIn('快捷名单配置未加载',app.app_state()['contact_groups_error'])
+        path.write_text(json.dumps({'groups':[valid]}),encoding='utf-8')
+        self.assertEqual(app.app_state()['contact_groups_error'],'')
+        self.assertEqual(app.app_state()['contact_groups'][1]['loaded_count'],1)
+
+    def test_three_itf_groups_keep_independent_ids_names_and_loaded_counts(self):
+        configured=[
+            {'id':'itf-2026-agencies','name':'ITF 旅行社','contact_ids':['ITF-AGENCY-TW','ITF-AGENCY-JP']},
+            {'id':'itf-2026-related','name':'ITF 旅行相关','contact_ids':['ITF-RELATED','MISSING-RELATED']},
+            {'id':'itf-2026-airlines','name':'ITF 航空公司','contact_ids':['ITF-AIRLINE']}]
+        (app.ROOT/'contact_groups.json').write_text(json.dumps({'groups':configured}),encoding='utf-8')
+        rows=[{'id':'ITF-AGENCY-TW','name':'Taiwan Agency','country':'台湾','email':'agency@example.com'},
+              {'id':'ITF-AGENCY-JP','name':'Japan Agency','country':'日本','email':'agency-jp@example.com'},
+              {'id':'ITF-RELATED','name':'Related Exhibitor','country':'台湾','email':''},
+              {'id':'ITF-AIRLINE','name':'Airline Exhibitor','country':'新加坡','email':'airline@example.com'}]
+        with patch.object(app,'sheet_bridge_request',return_value=self.cloud_contacts(rows)):
+            app.refresh_sheet_contacts()
+        state=app.app_state()
+        groups=state['contact_groups'][1:]
+        self.assertEqual(state['contact_groups_error'],'')
+        self.assertEqual([(group['id'],group['name'],group['contact_ids']) for group in groups],
+                         [(group['id'],group['name'],group['contact_ids']) for group in configured])
+        self.assertEqual([(group['total_count'],group['loaded_count'],group['country']) for group in groups],
+                         [(2,2,''),(2,1,''),(1,1,'')])
+        app.delete_contacts(['ITF-RELATED'])
+        self.assertEqual([group['loaded_count'] for group in app.app_state()['contact_groups'][1:]],[2,0,1])
+
     def test_contact_refresh_updates_cloud_fields_and_keeps_local_contacts_history_and_stops(self):
         self.sent();history=app.log_rows()
         local=app.add_contact({'country':'台湾','name':'Local Agency','email':'local@example.com'})
@@ -459,6 +791,55 @@ class WorkflowTests(unittest.TestCase):
         app.initialize();self.assertEqual(next(row for row in app.contacts() if row['id']=='TW-NEW')['name'],'New Agency')
         self.assertTrue(app.app_state()['contacts_refreshed_at'])
         with self.assertRaises(ValueError):app.send_batch(batch['id'],FakeSMTP(),pause=0)
+
+    def test_delete_contacts_persists_and_keeps_history_without_sheet_writes(self):
+        self.sent();history=app.log_rows()
+        local=app.add_contact({'name':'Local','email':'local@example.com','country':'台湾'})
+        ids=[local['id'],'TEST-20261002-001','SG-007']
+        batch=self.real_approved()
+        with patch.object(app,'sheet_bridge_request') as bridge:
+            self.assertEqual(app.delete_contacts(ids)['count'],3)
+            bridge.assert_not_called()
+        app.initialize()
+        self.assertTrue(set(ids).isdisjoint(row['id'] for row in app.contacts()))
+        self.assertEqual(app.log_rows(),history)
+        with self.assertRaises(ValueError):app.send_batch(batch['id'],FakeSMTP(),pause=0)
+        replacement=app.add_contact({'name':'Replacement','email':'local@example.com','country':'台湾'})
+        self.assertIn(replacement['id'],{row['id'] for row in app.contacts()})
+
+    def test_deleted_sheet_contact_stays_removed_after_refresh_and_bulk_additions_load(self):
+        app.delete_contacts(['SG-007'])
+        rows=[{'id':'SG-007','name':'Changed','country':'新加坡','email':'changed@example.com'},
+              {'id':'NEW-1','name':'New one','country':'台湾','email':'one@example.com'},
+              {'id':'NEW-2','name':'New two','country':'日本','email':'two@example.com'}]
+        with patch.object(app,'sheet_bridge_request',return_value=self.cloud_contacts(rows)):
+            app.refresh_sheet_contacts()
+        app.initialize()
+        ids={row['id'] for row in app.contacts()}
+        self.assertNotIn('SG-007',ids)
+        self.assertTrue({'NEW-1','NEW-2'} <= ids)
+
+    def test_delete_contacts_rejects_invalid_ids_atomically(self):
+        original=app.contacts()
+        for ids in (None,[],[{}],[''],['SG-007','missing']):
+            with self.subTest(ids=ids),self.assertRaises(ValueError):app.delete_contacts(ids)
+            self.assertEqual(app.contacts(),original)
+
+    def test_delete_contacts_requires_cancelling_scheduled_task(self):
+        with patch.object(app,'now',return_value='2030-02-01T12:00:00+09:00'):
+            batch,_=self.planned()
+        with self.assertRaisesRegex(ValueError,'先取消定时任务'):
+            app.delete_contacts(['TEST-20261002-001'])
+        app.cancel_schedule(batch['id'])
+        app.delete_contacts(['TEST-20261002-001'])
+        self.assertNotIn('TEST-20261002-001',{row['id'] for row in app.contacts()})
+
+    def test_delete_contacts_rejects_sending_batch(self):
+        batch=self.approved()
+        with app.db() as c:c.execute("UPDATE batches SET status='sending' WHERE id=?",(batch['id'],))
+        with self.assertRaisesRegex(ValueError,'正在发送'):
+            app.delete_contacts(['TEST-20261002-001'])
+        self.assertIn('TEST-20261002-001',{row['id'] for row in app.contacts()})
 
     def test_contact_refresh_failure_keeps_original_roster(self):
         original=app.contacts()
@@ -646,6 +1027,7 @@ class WorkflowTests(unittest.TestCase):
     def test_imap_reads_selected_employee(self):
         employee=self.employee();app.select_mail_account(employee['email']);sent=self.sent();reply=self.reply(sent,sender='agency@example.com').as_bytes()
         client=Mock();client.select.return_value=('OK',[]);client.uid.side_effect=[('OK',[b'1']),('OK',[(b'1',reply)])]
+        client.list.return_value=('OK',[b'() "/" "INBOX"'])
         app.SETTINGS['password']='dummy-password'
         with patch.object(app.imaplib,'IMAP4_SSL',return_value=client) as factory:result=app.check_inbox()
         client.login.assert_called_once_with(employee['email'],'dummy-password');client.select.assert_called_once_with('INBOX',readonly=True)

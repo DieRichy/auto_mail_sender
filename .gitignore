@@ -11,6 +11,9 @@
 !/lightweight_tool/index.html
 !/lightweight_tool/style.css
 !/lightweight_tool/test_app.py
+!/lightweight_tool/test_contact_groups.js
+!/lightweight_tool/test_workflow_backend.py
+!/lightweight_tool/test_workflow_ui.js
 !/lightweight_tool/default_templates.json
 !/lightweight_tool/SheetBridge.gs
 !/lightweight_tool/README.md
