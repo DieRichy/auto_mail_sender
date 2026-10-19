@@ -41,6 +41,27 @@
 | 马来西亚（马来文合作方式） | https://hiwin-partners.com/my/travel-agency-partnership/?utm_source=email&utm_medium=outreach&utm_campaign=my_agency_2026q4 |
 | 泰国（泰文合作方式） | https://hiwin-partners.com/th/travel-agency-partnership/?utm_source=email&utm_medium=outreach&utm_campaign=th_agency_2026q4 |
 
+## 北美／欧洲开发邮件（2026 年第 4 季起；美、加、德、丹各一个活动名，GA4 里按市场分开看）
+英文页面。邮件工具里已有四个国家绑定模板「English · 欧美首次合作 · 美国／加拿大／德国／丹麦」，正文链接就是下面这些；换国家请换模板，不要只改链接。
+| 市场 | 合作方式（正文第一个链接） | 首页 |
+|---|---|---|
+| 美国 | https://hiwin-partners.com/en/travel-agency-partnership/?utm_source=email&utm_medium=outreach&utm_campaign=us_agency_2026q4 | https://hiwin-partners.com/en/?utm_source=email&utm_medium=outreach&utm_campaign=us_agency_2026q4 |
+| 加拿大 | https://hiwin-partners.com/en/travel-agency-partnership/?utm_source=email&utm_medium=outreach&utm_campaign=ca_agency_2026q4 | https://hiwin-partners.com/en/?utm_source=email&utm_medium=outreach&utm_campaign=ca_agency_2026q4 |
+| 德国 | https://hiwin-partners.com/en/travel-agency-partnership/?utm_source=email&utm_medium=outreach&utm_campaign=de_agency_2026q4 | https://hiwin-partners.com/en/?utm_source=email&utm_medium=outreach&utm_campaign=de_agency_2026q4 |
+| 丹麦 | https://hiwin-partners.com/en/travel-agency-partnership/?utm_source=email&utm_medium=outreach&utm_campaign=dk_agency_2026q4 | https://hiwin-partners.com/en/?utm_source=email&utm_medium=outreach&utm_campaign=dk_agency_2026q4 |
+
+## 日本订房方（日资总部访日部门、地接、床位平台）
+| 用途 | 链接 |
+|---|---|
+| 日文开发邮件 | https://hiwin-partners.com/jp/travel-agency-partnership/?utm_source=email&utm_medium=outreach&utm_campaign=jp_landoperator_2026q4 |
+
+## 商谈会（预留，报名后再启用）
+| 活动 | 链接 |
+|---|---|
+| ACTA 加拿大旅行业协会 横滨商谈会 2026-12-02 | https://hiwin-partners.com/en/travel-agency-partnership/?utm_source=acta2026&utm_medium=event&utm_campaign=acta_yokohama_2026 |
+| ITB Berlin 2027-03 | https://hiwin-partners.com/en/travel-agency-partnership/?utm_source=itb2027&utm_medium=event&utm_campaign=itb_berlin_2027 |
+| VJTM 2027-09 | https://hiwin-partners.com/en/travel-agency-partnership/?utm_source=vjtm2027&utm_medium=event&utm_campaign=vjtm_2027 |
+
 ## LINE／WhatsApp 跟进
 | 用途 | 链接 |
 |---|---|

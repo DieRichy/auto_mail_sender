@@ -841,6 +841,15 @@ class WorkflowTests(unittest.TestCase):
             app.delete_contacts(['TEST-20261002-001'])
         self.assertIn('TEST-20261002-001',{row['id'] for row in app.contacts()})
 
+    def test_western_first_contact_templates_use_tracking_links_and_no_price(self):
+        rows={row['id']:row for row in app.template_rows()}
+        for code,country in (('us','美国'),('ca','加拿大'),('de','德国'),('dk','丹麦')):
+            template=rows['outreach-en-west-'+code]
+            self.assertEqual(template['country'],country)
+            self.assertIn('utm_campaign='+code+'_agency_2026q4',template['body'])
+            self.assertNotIn('JPY',template['body']);self.assertNotIn('rate sheet',template['body'].lower())
+            self.assertIn('contracts hotels in Japan',template['body'])
+
     def test_contact_refresh_failure_keeps_original_roster(self):
         original=app.contacts()
         for result in [self.cloud_contacts([]),{'ok':False},self.cloud_contacts([
