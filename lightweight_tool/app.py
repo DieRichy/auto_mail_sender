@@ -64,6 +64,19 @@ STOP_REASONS = {
     'legacy_unknown':('历史停止标记，原因待核对','核对历史记录及停止原因，再决定是否联系'),
 }
 PENDING_MESSAGE_STATES = frozenset({'待发送','发送中','待定时发送','待连接邮箱','待重新确认'})
+SHEET_STOP = {'stop_reason':'manual','stop_label':'表格标记勿再联系','stop_next_action':STOP_REASONS['manual'][1]}
+
+def empty_history():
+    return {'accepted_count':0,'last_sent_at':'','last_status':'','reply_status':'','reply_at':'','attempt_count':0,'by_activity':{}}
+
+def set_pref(c, key, value, table='preferences'):
+    c.execute(f'INSERT INTO {table} VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',(key,value))
+
+def invalidate_drafts(c):
+    c.execute("UPDATE batches SET status='invalidated',approved_digest=NULL WHERE status IN ('draft','approved')")
+
+def session_password(sender):
+    return MAIL_SESSIONS.get(sender) or (SETTINGS['password'] if sender==SETTINGS['sender'] else '')
 
 def activity_rows():
     return [{**row,'recommended_group_ids':list(row['recommended_group_ids'])} for row in ACTIVITIES]
@@ -160,7 +173,7 @@ def mailbox_histories(rows):
     result={}
     for row in rows:
         address=str(row.get('recipient') or '').lower()
-        history=result.setdefault(address,{'accepted_count':0,'last_sent_at':'','last_status':'','reply_status':'','reply_at':'','attempt_count':0,'by_activity':{}})
+        history=result.setdefault(address,empty_history())
         history['attempt_count']+=1
         if not history['last_status']:history['last_status']=row['status']
         if row.get('reply_status') and not history['reply_status']:
@@ -384,10 +397,10 @@ def initialize():
                                    ('reply_match_reason', "TEXT NOT NULL DEFAULT ''")]:
             if column not in existing:
                 c.execute(f'ALTER TABLE messages ADD COLUMN {column} {definition}')
-        if 'country' not in {r[1] for r in c.execute('PRAGMA table_info(templates)')}:
-            c.execute("ALTER TABLE templates ADD COLUMN country TEXT NOT NULL DEFAULT ''")
-        if 'activity_id' not in {r[1] for r in c.execute('PRAGMA table_info(templates)')}:
-            c.execute("ALTER TABLE templates ADD COLUMN activity_id TEXT NOT NULL DEFAULT ''")
+        existing = {r[1] for r in c.execute('PRAGMA table_info(templates)')}
+        for column in ('country', 'activity_id'):
+            if column not in existing:
+                c.execute(f"ALTER TABLE templates ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
         for row in c.execute('SELECT email FROM stops').fetchall():
             if not c.execute('SELECT 1 FROM stop_details WHERE email=?',(row['email'].lower(),)).fetchone():
                 c.execute('INSERT INTO stop_details(email,reason) VALUES(?,?)',(row['email'].lower(),inferred_stop_reason(c,row['email'].lower())))
@@ -449,7 +462,7 @@ def select_mail_account(address):
             raise ValueError('请先添加这个员工邮箱')
         if address != SETTINGS['sender']:
             SETTINGS.update(sender=address,password=MAIL_SESSIONS.get(address,''))
-            c.execute("UPDATE batches SET status='invalidated',approved_digest=NULL WHERE status IN ('draft','approved')")
+            invalidate_drafts(c)
         c.execute("UPDATE preferences SET value=? WHERE key='mail_account'",(address,))
     connected=bool(SETTINGS['password'])
     return {'ok':True,'sender':address,'connected':connected,
@@ -513,10 +526,10 @@ def contacts():
     for row in roster:
         row['country'] = normalize_country(row.get('country'))
         row.update(contact_identity(row,metadata))
-        row['history']=histories.get(row['email'].lower(),{'accepted_count':0,'last_sent_at':'','last_status':'','reply_status':'','reply_at':'','attempt_count':0,'by_activity':{}})
+        row['history']=histories.get(row['email'].lower()) or empty_history()
         row['blocked'] = (not test_recipient(row, roster) and
                           bool(row.get('blocked') or row['email'].lower() in stopped))
-        stop=stopped.get(row['email'].lower()) or ({'stop_reason':'manual','stop_label':'表格标记勿再联系','stop_next_action':STOP_REASONS['manual'][1]} if row.get('blocked') else {})
+        stop=stopped.get(row['email'].lower()) or (SHEET_STOP if row.get('blocked') else {})
         row.update({'stop_reason':'','stop_label':'','stop_next_action':'',**stop})
     return [row for row in roster if row['id'] not in deleted]
 
@@ -588,9 +601,9 @@ def refresh_sheet_contacts():
                 detail=stopped.get(old['email'].lower()) if old else None
                 if detail and detail['stop_reason']!='address_invalid' and row['email'] and row['email']!=old['email']:
                     record_stop(c,row['email'],detail['stop_reason'],detail.get('stop_source_id',''))
-            for key,value in [('sheet_contacts',json.dumps(roster,ensure_ascii=False)),('contacts_refreshed_at',stamp)]:
-                c.execute('INSERT INTO preferences VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',(key,value))
-            c.execute("UPDATE batches SET status='invalidated' WHERE status IN ('draft','approved')")
+            set_pref(c,'sheet_contacts',json.dumps(roster,ensure_ascii=False))
+            set_pref(c,'contacts_refreshed_at',stamp)
+            invalidate_drafts(c)
         return {'ok':True,'count':len(roster),'added':added,'updated':updated,'removed':removed,
                 'invalid_emails':invalid_emails,'refreshed_at':stamp,'source_sheet':'邮件跟踪'}
 
@@ -731,12 +744,12 @@ def save_template(data):
             ident='template-'+secrets.token_hex(8)
         c.execute('INSERT INTO templates(id,name,language,subject,body,links,attachments,country,activity_id) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,language=excluded.language,subject=excluded.subject,body=excluded.body,links=excluded.links,attachments=excluded.attachments,activity_id=excluded.activity_id',
                   (ident,name,language,subject,body,links,json.dumps([r['id'] for r in attached]),country,activity_id))
-        c.execute("INSERT INTO preferences VALUES('template',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",(ident,))
+        set_pref(c,'template',ident)
         if country:
             if activity_id:
-                c.execute('INSERT INTO preferences VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',('activity-country-template:'+activity_id+':'+country,ident))
+                set_pref(c,'activity-country-template:'+activity_id+':'+country,ident)
             if not activity_id or activity_id=='first-contact':
-                c.execute('INSERT INTO preferences VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',('country-template:'+country,ident))
+                set_pref(c,'country-template:'+country,ident)
     return {'id':ident}
 
 def delete_template(data):
@@ -772,16 +785,12 @@ def render(template, contact):
     value = value.replace('{{sender_whatsapp_phone}}',profile['effective_whatsapp']['phone'])
     value = value.replace('{{sender_whatsapp}}',profile['effective_whatsapp']['url'])
     if '{{sender_line}}' in value:
-        profile = sender_contact()
-        if not profile or not profile.get('line_url'):
+        if not profile.get('line_url'):
             raise ValueError('当前员工尚未配置 LINE 联系方式，请先设置后再预览台湾版。')
         value = value.replace('{{sender_line}}',profile['line_url'])
     if re.search(r'\{\{.*?\}\}', value):
         raise ValueError('模板存在未替换变量；支持 agency_name、test_id、sender_name、sender_email、sender_contact_email、sender_line、sender_whatsapp、sender_whatsapp_phone、partner_website')
     return value
-
-def sender_contact():
-    return contact_config()
 
 def stored_contact(key):
     with db() as c:
@@ -847,12 +856,12 @@ def save_contact_config(data):
             raise ValueError('请重新上传二维码图片')
     with LOCK,db() as c:
         if profile['use_shared_whatsapp']:
-            c.execute('INSERT INTO contact_settings VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',('shared-whatsapp',json.dumps(whatsapp)))
+            set_pref(c,'shared-whatsapp',json.dumps(whatsapp),'contact_settings')
             profile['whatsapp']=contact_config()['whatsapp']
         else:
             profile['whatsapp']=whatsapp
-        c.execute('INSERT INTO contact_settings VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',(SETTINGS['sender'],json.dumps(profile)))
-        c.execute("UPDATE batches SET status='invalidated' WHERE status IN ('draft','approved')")
+        set_pref(c,SETTINGS['sender'],json.dumps(profile),'contact_settings')
+        invalidate_drafts(c)
     return {'ok':True,'contact_config':contact_config()}
 
 def make_signature(url,file,channel):
@@ -868,8 +877,8 @@ def is_taiwan_template(data):
 def line_signature(data):
     if not is_taiwan_template(data):
         return None
-    profile = sender_contact()
-    if not profile or not profile.get('line_url'):
+    profile = contact_config()
+    if not profile.get('line_url'):
         raise ValueError('当前员工尚未配置 LINE 链接与二维码，请先设置后再预览台湾版。')
     return make_signature(profile['line_url'],profile['line_qr'],'LINE') if profile.get('line_qr') else None
 
@@ -942,7 +951,9 @@ def body_sections(body, taiwan=False):
 def inline_runs(text, emphasize=False, bold=False, italic=False):
     # Only a small Markdown subset is accepted; all output remains escaped.
     # URLs/emails are opaque so punctuation inside them never becomes formatting.
-    pattern=(r'(?P<strong_em>\*\*\*(?=\S)[^\n]+?(?<=\S)\*\*\*)'
+    # [显示文字](https://...) shows only the text in HTML; plain text keeps the URL.
+    pattern=(r'(?P<mdlink>\[[^\[\]\n]+\]\(https?://[^\s()<>]+\))'
+             r'|(?P<strong_em>\*\*\*(?=\S)[^\n]+?(?<=\S)\*\*\*)'
              r'|(?P<strong>\*\*(?=\S)[^\n]+?(?<=\S)\*\*)'
              r'|(?P<em>(?<!\*)\*(?!\*)(?=\S)[^\n*]+?(?<=\S)\*(?!\*))'
              r'|(?P<url>https?://[^\s<>。，；、）\]]+)'
@@ -964,6 +975,9 @@ def inline_runs(text, emphasize=False, bold=False, italic=False):
             runs.extend(inline_runs(value[width:-width],emphasize,
                                     bold or kind in ('strong_em','strong'),
                                     italic or kind in ('strong_em','em')))
+        elif kind=='mdlink':
+            label,_,url=value[1:-1].partition('](')
+            literal(label,url=url,label=True)
         elif kind=='url':
             literal(value,url=value)
         elif kind=='brand' and emphasize:
@@ -976,7 +990,7 @@ def inline_runs(text, emphasize=False, bold=False, italic=False):
 
 def plain_text_body(body):
     body=re.sub(r'(?m)^#{1,3}[ \t]+','',body)
-    return ''.join(run['text'] for run in inline_runs(body))
+    return ''.join(run['text']+(' ('+run['url']+')' if run.get('label') else '') for run in inline_runs(body))
 
 def email_html(body, signature=None, taiwan=False):
     sections=[]
@@ -1068,7 +1082,7 @@ def create_batch(data):
         actual_links=[{'label':render(item['label'],r),'url':render(item['url'],r)} for item in links]
         if actual_links:
             heading='Links:' if language.lower().startswith('en') else '相關連結：'
-            body=body.rstrip()+'\n\n'+heading+'\n'+'\n'.join((item['label']+'：' if item['label'] else '')+item['url'] for item in actual_links)
+            body=body.rstrip()+'\n\n'+heading+'\n'+'\n'.join('['+item['label']+']('+item['url']+')' if item['label'] and not re.search(r'[\[\]\n]',item['label']) and not re.search(r'[()<>]',item['url']) else (item['label']+'：' if item['label'] else '')+item['url'] for item in actual_links)
         rendered.append({'contact_id': r['id'], 'name': r['name'], 'recipient': address,
                          **activity,**{key:r.get(key,'') for key in ('company_id','email_role','contact_name','contact_title')},
                          'message_type':'test' if test_recipient(r,all_contacts) else 'formal',
@@ -1149,7 +1163,7 @@ def send_review(c, batch, payload, roster, scheduled_at=''):
             if row['id']==message['contact_id'] or row['email'].lower()==address)
         facts=histories.get(address,{})
         current=facts.get('by_activity',{}).get(ident,{}) if ident else {}
-        stop=stopped.get(address) or ({'stop_reason':'manual','stop_label':'表格标记勿再联系','stop_next_action':STOP_REASONS['manual'][1]} if flagged else {})
+        stop=stopped.get(address) or (SHEET_STOP if flagged else {})
         company_id=message.get('company_id') or contact.get('company_id') or message['contact_id']
         companies.setdefault(company_id,[]).append({'name':message['name'],'recipient':address})
         recipients.append({'name':message['name'],'recipient':address,
@@ -1257,8 +1271,7 @@ def process_schedules(current_time=None, transport_factory=None, pause=8):
                            ('stop_reason' in original.get(row['recipient'],{}) and row['stop_reason']!=original[row['recipient']]['stop_reason'])) for row in review['recipients']):
                         mark_schedule(c,ident,'needs_review','待重新确认','收件人新增或变更停止联系原因，请核对后重新安排')
                         continue
-                    password=MAIL_SESSIONS.get(payload['sender']) or (SETTINGS['password'] if payload['sender']==SETTINGS['sender'] else '')
-                    if not password and transport_factory is None:
+                    if not session_password(payload['sender']) and transport_factory is None:
                         mark_schedule(c,ident,'awaiting_mail','待连接邮箱','到时未连接发件邮箱；请连接，将在计划时间后 5 分钟内继续发送')
                         continue
                     c.execute("UPDATE schedules SET status='running',error='' WHERE batch_id=?",(ident,))
@@ -1304,8 +1317,7 @@ def send_batch(ident, transport=None, pause=8, confirmation=None, scheduled=Fals
         client = None
         failed = False
         try:
-            password=MAIL_SESSIONS.get(payload['sender']) or (SETTINGS['password'] if payload['sender']==SETTINGS['sender'] else '')
-            client = transport or (smtp(payload['sender'],password) if scheduled else smtp())
+            client = transport or (smtp(payload['sender'],session_password(payload['sender'])) if scheduled else smtp())
             with db() as c:
                 rows = c.execute('SELECT * FROM messages WHERE batch_id=? ORDER BY rowid', (ident,)).fetchall()
             for index, row in enumerate(rows):
@@ -1385,7 +1397,6 @@ def log_rows():
         # Reply/manual-stop statuses used to overwrite status; sent_at remains the
         # physical SMTP acceptance evidence and is shown independently.
         row['send_status']='服务器已接受' if row['sent_at'] else row['status']
-        row['delivery_status']=row['send_status']
         stop=stops.get(str(row['recipient'] or '').lower(),{})
         row.update({'stop_reason':'','stop_label':'','stop_next_action':'',**stop})
         row['recommended_next_action']=stop.get('stop_next_action') or row['next_step'] or {
@@ -1395,18 +1406,11 @@ def log_rows():
             '退信':'核对退信原因，通过电话／官网核实收件邮箱',
             '已回复':'查看来信并人工跟进',
         }.get(row['status'],'查看发送状态并完成当前操作')
-        if row['reply_message_id'] or row['reply_text'] or row['reply_sender']:
-            detail={'text':row['reply_text'],'body':row['reply_text'],'excerpt':row['reply_text'][:280],
-                    'sender':row['reply_sender'],'from':row['reply_sender'],'subject':row['reply_subject'],
-                    'date':row['reply_date'],'received_at':row['reply_date'],'detected_at':row['reply_at'],
-                    'message_id':row['reply_message_id'],'match_reason':row['reply_match_reason']}
-        else:detail=None
-        row['reply_detail']=detail
-        row['reply_evidence']=detail
+        row['reply_detail']={'text':row['reply_text'],'sender':row['reply_sender'],'subject':row['reply_subject'],
+                             'received_at':row['reply_date'],'detected_at':row['reply_at'],
+                             'message_id':row['reply_message_id'],'match_reason':row['reply_match_reason']
+                             } if row['reply_message_id'] or row['reply_text'] or row['reply_sender'] else None
     return rows
-
-def delete_record(ident):
-    return delete_records([ident])
 
 def delete_records(ids):
     if not isinstance(ids,list) or not ids or len(ids)>10000 or any(not isinstance(ident,str) or not ident for ident in ids) or len(set(ids))!=len(ids):
@@ -1490,33 +1494,30 @@ def sheet_sync_chunks(rows):
 
 def sync_sheet(probe=False):
     with SYNC_LOCK:
-        return sync_sheet_locked(probe)
-
-def sync_sheet_locked(probe=False):
-    if not SETTINGS['bridge_url'] or not SETTINGS['bridge_secret']:
-        return {'ok': False, 'error': 'Google Sheet 尚未连接；记录已保存本地'}
-    with db() as c:
-        pending = [dict(r) for r in c.execute('SELECT * FROM messages WHERE sheet_synced=0')]
-    if not pending and not probe:
-        return {'ok': True, 'count': 0}
-    synced=0
-    try:
-        for chunk in sheet_sync_chunks(pending) if pending else [[]]:
-            result=sheet_bridge_request({'rows':chunk})
-            if not result.get('ok'):
-                raise ValueError('同步端点拒绝请求，请检查部署与表格连接')
-            if result.get('count')!=len(chunk):
-                raise ValueError('Sheet 返回的同步笔数不一致，请重试同步')
-            with db() as c:
-                # Commit each acknowledged chunk; leave concurrent changes pending.
-                for row in chunk:
-                    changed=c.execute('UPDATE messages SET sheet_synced=1 WHERE id=? AND status=? AND reply_status=? AND reply_at=? AND next_step=?',
-                              (row['id'], row['status'], row['reply_status'], row['reply_at'], row['next_step']))
-                    synced+=changed.rowcount
-        return {'ok': True, 'count': synced}
-    except Exception as exc:
-        reason=str(exc) if isinstance(exc,ValueError) else type(exc).__name__
-        return {'ok': False, 'count':synced,'error':f'Sheet 同步失败：{reason}；已同步 {synced} 条，剩余记录可只重试同步，邮件不会重发'}
+        if not SETTINGS['bridge_url'] or not SETTINGS['bridge_secret']:
+            return {'ok': False, 'error': 'Google Sheet 尚未连接；记录已保存本地'}
+        with db() as c:
+            pending = [dict(r) for r in c.execute('SELECT * FROM messages WHERE sheet_synced=0')]
+        if not pending and not probe:
+            return {'ok': True, 'count': 0}
+        synced=0
+        try:
+            for chunk in sheet_sync_chunks(pending) if pending else [[]]:
+                result=sheet_bridge_request({'rows':chunk})
+                if not result.get('ok'):
+                    raise ValueError('同步端点拒绝请求，请检查部署与表格连接')
+                if result.get('count')!=len(chunk):
+                    raise ValueError('Sheet 返回的同步笔数不一致，请重试同步')
+                with db() as c:
+                    # Commit each acknowledged chunk; leave concurrent changes pending.
+                    for row in chunk:
+                        changed=c.execute('UPDATE messages SET sheet_synced=1 WHERE id=? AND status=? AND reply_status=? AND reply_at=? AND next_step=?',
+                                  (row['id'], row['status'], row['reply_status'], row['reply_at'], row['next_step']))
+                        synced+=changed.rowcount
+            return {'ok': True, 'count': synced}
+        except Exception as exc:
+            reason=str(exc) if isinstance(exc,ValueError) else type(exc).__name__
+            return {'ok': False, 'count':synced,'error':f'Sheet 同步失败：{reason}；已同步 {synced} 条，剩余记录可只重试同步，邮件不会重发'}
 
 def delivery_blocks(msg):
     blocks=[]
@@ -1685,55 +1686,52 @@ def incoming_folders(client):
 
 def check_inbox():
     with LOCK:
-        return check_current_inbox()
-
-def check_current_inbox():
-    if not SETTINGS['password']:
-        raise ValueError('先在工具中连接当前公司邮箱：'+SETTINGS['sender'])
-    sender=SETTINGS['sender']
-    client=imaplib.IMAP4_SSL(SETTINGS['imap_host'],SETTINGS['imap_port'],ssl_context=tls_context(),timeout=30)
-    count=scanned=fetched_count=0
-    folder_results=[]
-    warnings=[]
-    try:
-        try:client.login(sender,SETTINGS['password'])
-        except imaplib.IMAP4.error:
-            raise ValueError('公司邮箱 IMAP 登录失败；请核对当前员工的密码及收信权限') from None
-        folders,warnings=incoming_folders(client)
-        since=(datetime.now(ZoneInfo('Asia/Tokyo'))-timedelta(days=30)).strftime('%d-%b-%Y')
-        for folder in folders:
-            info={'name':folder['name'],'scanned':0,'fetched':0,'matched':0,'ok':False}
-            folder_results.append(info)
-            try:
-                result,_=client.select(folder['mailbox'],readonly=True)
-                if result!='OK':raise ValueError('无法只读打开')
-                result,values=client.uid('search',None,'SINCE',since)
-                if result!='OK':raise ValueError('无法搜索最近30天来信')
-                if not values or not isinstance(values[0],bytes):raise ValueError('搜索结果不完整')
-                ids=values[0].split()
-                info['scanned']=len(ids);scanned+=len(ids)
-                for start in range(0,len(ids),10):
-                    chunk=ids[start:start+10]
-                    result,fetched=client.uid('fetch',b','.join(chunk),'(UID BODY.PEEK[])')
-                    if result!='OK':
-                        warnings.append(folder['name']+'：有一批来信读取失败，请重试检查');continue
-                    messages=[item[1] for item in fetched or [] if isinstance(item,tuple) and isinstance(item[1],bytes)]
-                    info['fetched']+=len(messages);fetched_count+=len(messages)
-                    if len(messages)!=len(chunk):
-                        warnings.append(folder['name']+'：有来信未完整返回，请重试检查')
-                    for raw in messages:
-                        updated=record_incoming(raw,sender)
-                        count+=updated;info['matched']+=updated
-                info['ok']=info['scanned']==info['fetched']
-            except (imaplib.IMAP4.error,OSError,ValueError):
-                warnings.append(folder['name']+'：文件夹检查未完成，请重试检查')
-        sync_result=sync_sheet()
-        return {'ok':True,'complete':not warnings,'sender':sender,'matched':count,'scanned':scanned,
-                'fetched':fetched_count,'folders':folder_results,'warnings':list(dict.fromkeys(warnings)),
-                'sheet_sync':sync_result}
-    finally:
-        try:client.logout()
-        except Exception:pass
+        if not SETTINGS['password']:
+            raise ValueError('先在工具中连接当前公司邮箱：'+SETTINGS['sender'])
+        sender=SETTINGS['sender']
+        client=imaplib.IMAP4_SSL(SETTINGS['imap_host'],SETTINGS['imap_port'],ssl_context=tls_context(),timeout=30)
+        count=scanned=fetched_count=0
+        folder_results=[]
+        warnings=[]
+        try:
+            try:client.login(sender,SETTINGS['password'])
+            except imaplib.IMAP4.error:
+                raise ValueError('公司邮箱 IMAP 登录失败；请核对当前员工的密码及收信权限') from None
+            folders,warnings=incoming_folders(client)
+            since=(datetime.now(ZoneInfo('Asia/Tokyo'))-timedelta(days=30)).strftime('%d-%b-%Y')
+            for folder in folders:
+                info={'name':folder['name'],'scanned':0,'fetched':0,'matched':0,'ok':False}
+                folder_results.append(info)
+                try:
+                    result,_=client.select(folder['mailbox'],readonly=True)
+                    if result!='OK':raise ValueError('无法只读打开')
+                    result,values=client.uid('search',None,'SINCE',since)
+                    if result!='OK':raise ValueError('无法搜索最近30天来信')
+                    if not values or not isinstance(values[0],bytes):raise ValueError('搜索结果不完整')
+                    ids=values[0].split()
+                    info['scanned']=len(ids);scanned+=len(ids)
+                    for start in range(0,len(ids),10):
+                        chunk=ids[start:start+10]
+                        result,fetched=client.uid('fetch',b','.join(chunk),'(UID BODY.PEEK[])')
+                        if result!='OK':
+                            warnings.append(folder['name']+'：有一批来信读取失败，请重试检查');continue
+                        messages=[item[1] for item in fetched or [] if isinstance(item,tuple) and isinstance(item[1],bytes)]
+                        info['fetched']+=len(messages);fetched_count+=len(messages)
+                        if len(messages)!=len(chunk):
+                            warnings.append(folder['name']+'：有来信未完整返回，请重试检查')
+                        for raw in messages:
+                            updated=record_incoming(raw,sender)
+                            count+=updated;info['matched']+=updated
+                    info['ok']=info['scanned']==info['fetched']
+                except (imaplib.IMAP4.error,OSError,ValueError):
+                    warnings.append(folder['name']+'：文件夹检查未完成，请重试检查')
+            sync_result=sync_sheet()
+            return {'ok':True,'complete':not warnings,'sender':sender,'matched':count,'scanned':scanned,
+                    'fetched':fetched_count,'folders':folder_results,'warnings':list(dict.fromkeys(warnings)),
+                    'sheet_sync':sync_result}
+        finally:
+            try:client.logout()
+            except Exception:pass
 
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *_):
@@ -1794,73 +1792,48 @@ class Handler(BaseHTTPRequestHandler):
             if not 0 < size <= limit:
                 raise ValueError('请求过大或为空')
             data = json.loads(self.rfile.read(size))
-            if self.path == '/api/connect':
-                value = connect_mail(data)
-            elif self.path == '/api/account':
-                value = save_mail_account(data)
-            elif self.path == '/api/account/select':
-                value = select_mail_account(data.get('email',''))
-            elif self.path == '/api/contact-config':
-                with LOCK:
-                    value=save_contact_config(data)
-            elif self.path == '/api/contact-qr':
-                value=upload_contact_qr(data)
-            elif self.path == '/api/sheet':
-                value=configure_sheet(data)
-            elif self.path == '/api/sheet/restore':
-                with LOCK:
-                    restored=restore_sheet_settings()
-                value={'ok':restored,'error':SETTINGS['sheet_store_error'] or '本机还没有保存过 Sheet 连接'}
-            elif self.path == '/api/contact':
-                value=add_contact(data)
-            elif self.path == '/api/contacts/refresh':
-                value=refresh_sheet_contacts()
-            elif self.path == '/api/contacts/delete':
-                value=delete_contacts(data.get('ids'))
-            elif self.path == '/api/template':
-                value=save_template(data)
-            elif self.path == '/api/template/delete':
-                value=delete_template(data)
-            elif self.path == '/api/upload':
-                with LOCK:
-                    value=upload_attachment(data)
-            elif self.path == '/api/preview':
-                with LOCK:
-                    require_current_sender(data)
-                    value = create_batch(data)
-            elif self.path == '/api/approve':
-                with LOCK:
-                    require_current_sender(data)
-                    value = approve_batch(data['id'], data['digest'])
-            elif self.path == '/api/send-check':
-                with LOCK:
-                    require_current_sender(data)
-                    value = check_send(data['id'],data['scheduled_at']) if 'scheduled_at' in data else check_send(data['id'])
-            elif self.path == '/api/schedule':
-                with LOCK:
-                    require_current_sender(data)
-                    value = schedule_batch(data['id'],data.get('scheduled_at'),data.get('confirmation'))
-            elif self.path == '/api/schedule/cancel':
-                value = cancel_schedule(data['id'])
-            elif self.path == '/api/send':
-                with LOCK:
-                    require_current_sender(data)
-                    value = send_batch(data['id'],confirmation=data.get('confirmation'))
-            elif self.path == '/api/records/delete':
-                value = delete_records(data['ids']) if 'ids' in data else delete_record(data['id'])
-            elif self.path == '/api/sync':
-                value = sync_sheet()
-            elif self.path == '/api/inbox':
-                with LOCK:
-                    require_current_sender(data)
-                    value = check_inbox()
-            elif self.path == '/api/stop':
-                value = stop_contact(data)
-            else:
+            if self.path not in POST_ROUTES:
                 return self.respond({'error': 'Not found'}, 404)
-            self.respond(value)
+            action, locked, sender_bound = POST_ROUTES[self.path]
+            if not locked:
+                return self.respond(action(data))
+            with LOCK:
+                if sender_bound:
+                    require_current_sender(data)
+                self.respond(action(data))
         except Exception as exc:
             self.respond({'error': str(exc) if isinstance(exc, ValueError) else type(exc).__name__}, 400)
+
+def restore_sheet(_):
+    restored=restore_sheet_settings()
+    return {'ok':restored,'error':SETTINGS['sheet_store_error'] or '本机还没有保存过 Sheet 连接'}
+
+# path: (action, run under LOCK, require the page's sender to match)
+POST_ROUTES = {
+    '/api/connect': (lambda d: connect_mail(d), False, False),
+    '/api/account': (lambda d: save_mail_account(d), False, False),
+    '/api/account/select': (lambda d: select_mail_account(d.get('email','')), False, False),
+    '/api/contact-config': (lambda d: save_contact_config(d), True, False),
+    '/api/contact-qr': (lambda d: upload_contact_qr(d), False, False),
+    '/api/sheet': (lambda d: configure_sheet(d), False, False),
+    '/api/sheet/restore': (lambda d: restore_sheet(d), True, False),
+    '/api/contact': (lambda d: add_contact(d), False, False),
+    '/api/contacts/refresh': (lambda d: refresh_sheet_contacts(), False, False),
+    '/api/contacts/delete': (lambda d: delete_contacts(d.get('ids')), False, False),
+    '/api/template': (lambda d: save_template(d), False, False),
+    '/api/template/delete': (lambda d: delete_template(d), False, False),
+    '/api/upload': (lambda d: upload_attachment(d), True, False),
+    '/api/preview': (lambda d: create_batch(d), True, True),
+    '/api/approve': (lambda d: approve_batch(d['id'], d['digest']), True, True),
+    '/api/send-check': (lambda d: check_send(d['id'], *([d['scheduled_at']] if 'scheduled_at' in d else [])), True, True),
+    '/api/schedule': (lambda d: schedule_batch(d['id'], d.get('scheduled_at'), d.get('confirmation')), True, True),
+    '/api/schedule/cancel': (lambda d: cancel_schedule(d['id']), False, False),
+    '/api/send': (lambda d: send_batch(d['id'], confirmation=d.get('confirmation')), True, True),
+    '/api/records/delete': (lambda d: delete_records(d['ids'] if 'ids' in d else [d['id']]), False, False),
+    '/api/sync': (lambda d: sync_sheet(), False, False),
+    '/api/inbox': (lambda d: check_inbox(), True, True),
+    '/api/stop': (lambda d: stop_contact(d), False, False),
+}
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()

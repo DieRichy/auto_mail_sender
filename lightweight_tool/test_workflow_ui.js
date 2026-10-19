@@ -80,7 +80,7 @@ test('record details expose frozen content rather than current draft, and legacy
 });
 
 test('bounce and auto response evidence do not count as human replies; malformed Date cannot break details',()=>{
- const {get,run,json,text}=ui();run(`state.messages.push({...state.messages[0],id:'bounce',activity_id:'itf-2026',status:'退信',reply_status:'退信',reply_at:'2026-10-02T01:00:00Z',reply_detail:{sender:'mailer-daemon@example.com',subject:'Delivery failed',received_at:'not-a-date',body:'Address invalid'}});
+ const {get,run,json,text}=ui();run(`state.messages.push({...state.messages[0],id:'bounce',activity_id:'itf-2026',status:'退信',reply_status:'退信',reply_at:'2026-10-02T01:00:00Z',reply_detail:{sender:'mailer-daemon@example.com',subject:'Delivery failed',received_at:'not-a-date',text:'Address invalid'}});
  state.messages.push({...state.messages[0],id:'auto',reply_status:'自动回复',reply_at:'2026-10-02T01:00:00Z'});renderRecords();`);
  get('recordView').value='replied';get('recordView').onchange();assert.deepEqual(json('filteredRecords().map(item=>item.id)'),[]);
  get('recordView').value='errors';get('recordView').onchange();assert.deepEqual(json('filteredRecords().map(item=>item.id)'),['uncertain','bounce']);

@@ -190,9 +190,9 @@ class WorkflowTests(unittest.TestCase):
         batch=self.real_approved();transport=FakeSMTP()
         app.send_batch(batch['id'],transport,pause=0,confirmation=app.check_send(batch['id'])['digest'])
         row=app.log_rows()[0]
-        app.delete_record(row['id']);self.assertEqual(app.log_rows(),[])
+        app.delete_records([row['id']]);self.assertEqual(app.log_rows(),[])
         app.initialize();self.assertEqual(app.log_rows(),[])
-        with self.assertRaises(ValueError):app.delete_record(row['id'])
+        with self.assertRaises(ValueError):app.delete_records([row['id']])
         second=self.real_approved()
         self.assertEqual(app.check_send(second['id'])['recipients'][0]['previous_count'],1)
         self.assertEqual(app.record_incoming(self.reply(transport.sent[0]).as_bytes()),1)
@@ -202,11 +202,11 @@ class WorkflowTests(unittest.TestCase):
     def test_delete_record_rejects_active_batch(self):
         self.sent();row=app.log_rows()[0]
         with app.db() as c:c.execute("UPDATE batches SET status='sending' WHERE id=?",(row['batch_id'],))
-        with self.assertRaises(ValueError):app.delete_record(row['id'])
+        with self.assertRaises(ValueError):app.delete_records([row['id']])
         self.assertEqual(len(app.log_rows()),1)
 
     def test_deleted_records_do_not_limit_daily_sends(self):
-        self.sent();app.delete_record(app.log_rows()[0]['id'])
+        self.sent();app.delete_records([app.log_rows()[0]['id']])
         with app.db() as c:
             c.execute("INSERT INTO messages(id,batch_id,contact_id,name,recipient,subject,body,status,sent_at) SELECT '<prior-'||n||'@example.com>','old','old','Test','other'||n||'@example.com','x','x','服务器已接受',? FROM (WITH RECURSIVE nums(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM nums WHERE n<29) SELECT n FROM nums)",(app.now(),))
         transport=FakeSMTP()
@@ -1366,6 +1366,24 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn('href="https://example.com/a**b**"',rendered)
         self.assertIn('name*tag@example.com',rendered)
         self.assertIn('https://example.com/a**b**',app.plain_text_body(body))
+
+    def test_named_links_hide_long_urls_in_html_but_keep_them_in_plain_text(self):
+        url='https://hiwin-partners.com/tw/?utm_source=email&utm_medium=outreach&utm_campaign=tw_agency_2026q4'
+        body='請查看[合作方案]('+url+')。\n**[大阪住宿](https://hiwin-partners.com/tw/osaka-accommodation/)**\n[<b>x</b>](https://example.com/a)'
+        rendered=app.email_html(body)
+        self.assertIn('<a href="'+url.replace('&','&amp;')+'">合作方案</a>',rendered)
+        self.assertNotIn('>'+url,rendered)
+        self.assertIn('<strong><a href="https://hiwin-partners.com/tw/osaka-accommodation/">大阪住宿</a></strong>',rendered)
+        self.assertIn('>&lt;b&gt;x&lt;/b&gt;</a>',rendered)
+        self.assertIn('請查看合作方案 ('+url+')。',app.plain_text_body(body))
+        self.assertEqual(app.plain_text_body('[no url](not-a-link)'),'[no url](not-a-link)')
+        batch=app.create_batch({'ids':['TEST-20261002-001'],'subject':'Links','body':'Hello','language':'English',
+                                'links':'Partner page | '+url+'\nhttps://example.com/raw\nBad [label] | https://example.com/b'})
+        row=batch['messages'][0]
+        self.assertIn('>Partner page</a>',row['html'])
+        self.assertIn('>https://example.com/raw</a>',row['html'])
+        self.assertIn('Bad [label]：<a href="https://example.com/b">',row['html'])
+        self.assertIn('Partner page ('+url+')',row['body'])
 
     def test_nested_markdown_and_html_are_safe(self):
         rendered=app.email_html('**bold with *italic* inside**\n**<img src=x onerror=alert(1)>**\n## <script>title</script>')

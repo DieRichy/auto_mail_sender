@@ -23,7 +23,7 @@ function ui(){
  ],countries:['台湾','日本','新加坡'],contact_groups:[
   {id:'taipei-179',name:'台北 179 家',country:'台湾',contact_ids:['TW-001'],loaded_count:1,total_count:179},
   {id:'itf-2026',name:'ITF Taiwan 2026 参展商',country:'',contact_ids:['TW-001','JP-ITF-001','ITF-NO-EMAIL','MISSING'],loaded_count:3,total_count:4}
- ],contact_groups_error:'',templates:[],country_templates:{},partner_websites:{},sheet_configured:true};
+ ],contact_groups_error:'',templates:[],country_templates:{},partner_websites:{},sheet_configured:true,activities:[{id:'first-contact',name:'首次合作介绍',purpose:'介绍公司与住宿合作'},{id:'itf-2026',name:'ITF 展位邀约',purpose:'邀请参展商到 J3302 交流'},{id:'responsible-followup',name:'负责人跟进',purpose:'向已核实的负责人继续联系'}]};
  renderContactGroups();`);
  const ids=()=>JSON.parse(run('JSON.stringify(visibleContacts().map(row=>row.id))'));
  return {get,run,ids};

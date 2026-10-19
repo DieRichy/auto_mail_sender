@@ -78,7 +78,7 @@ class WorkflowBackendTests(unittest.TestCase):
         row=app.log_rows()[0]
         self.assertEqual(row['activity_id'],'')
         self.assertEqual(row['activity_name'],'历史发送（活动未标记）')
-        self.assertIsNone(row['reply_evidence'])
+        self.assertIsNone(row['reply_detail'])
         with app.db() as c:
             self.assertEqual(c.execute('SELECT payload FROM batches WHERE id="legacy"').fetchone()[0],raw)
             _,actual=app.approved_payload(c,'legacy')
@@ -138,7 +138,7 @@ class WorkflowBackendTests(unittest.TestCase):
     def test_accepted_hidden_history_survives_later_failed_resend(self):
         self.send(self.batch())
         accepted=app.log_rows()[0]
-        app.delete_record(accepted['id'])
+        app.delete_records([accepted['id']])
         self.send(self.batch(),error=app.smtplib.SMTPDataError(550,b'rejected'))
         self.assertEqual(app.log_rows()[0]['status'],'发送失败')
         history=next(row for row in app.contacts() if row['id']=='SG-007')['history']
@@ -205,10 +205,10 @@ class WorkflowBackendTests(unittest.TestCase):
         row=app.log_rows()[0]
         self.assertEqual((row['send_status'],row['reply_status'],row['stop_reason']),
                          ('服务器已接受','已回复','human_reply'))
-        evidence=row['reply_evidence']
+        evidence=row['reply_detail']
         self.assertEqual(evidence['text'],'Please meet us on Friday at 11:00.')
         self.assertEqual(evidence['sender'],'Actual Manager <manager@example.net>')
-        self.assertEqual(evidence['date'],str(reply['Date']))
+        self.assertEqual(evidence['received_at'],str(reply['Date']))
         self.assertEqual(evidence['message_id'],'<actual-reply@example.net>')
         self.assertEqual(evidence['match_reason'],'邮件引用匹配')
         self.assertTrue(evidence['detected_at'])
@@ -242,7 +242,7 @@ class WorkflowBackendTests(unittest.TestCase):
         self.assertEqual(roster['SG-007']['stop_reason'],'human_reply')
         self.assertEqual(roster['SG-012']['stop_reason'],'legacy_unknown')
         self.assertTrue(roster['SG-012']['blocked'])
-        self.assertIsNone(app.log_rows()[0]['reply_evidence'])
+        self.assertIsNone(app.log_rows()[0]['reply_detail'])
 
     def test_scheduled_new_stop_reason_requires_review_and_never_sends(self):
         app.SETTINGS['password']='test-only'
