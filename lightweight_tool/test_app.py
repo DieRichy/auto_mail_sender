@@ -690,6 +690,7 @@ class WorkflowTests(unittest.TestCase):
         app.save_template({'id':template['id'],'name':'泰國舊版','language':'English','subject':'s2','body':'b','folder':'','attachments':[]})
         self.assertEqual(folder(),'')
         with self.assertRaises(ValueError):app.save_template({'name':'x','language':'English','subject':'s','body':'b','folder':'a\nb','attachments':[]})
+        self.assertIs(app.status()['template_folders'],True)
     def test_country_and_template_survive_reinitialization(self):
         contact=app.add_contact({'country':'臺灣','name':'台灣測試旅行社','email':'taiwan@example.com'})
         template=app.save_template({'name':'台灣客製','language':'繁體中文','subject':'您好 {{agency_name}}','body':'合作洽詢','links':'官網 | https://example.com/hotel','attachments':[]})

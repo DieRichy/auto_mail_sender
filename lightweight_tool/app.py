@@ -1460,7 +1460,7 @@ def status():
             'sheet_saved':SETTINGS.get('sheet_saved',False),'sheet_store_error':SETTINGS.get('sheet_store_error',''),
             'bridge_url':SETTINGS['bridge_url'],'sender': SETTINGS['sender'],
             'smtp_endpoint':f"{SETTINGS['smtp_host']}:{SETTINGS['smtp_port']}",
-            'send_progress':send_progress(),'activities':activity_rows()}
+            'send_progress':send_progress(),'activities':activity_rows(),'template_folders':True}
 
 def app_state():
     info=status()
