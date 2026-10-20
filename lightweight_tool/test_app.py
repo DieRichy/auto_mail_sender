@@ -843,12 +843,13 @@ class WorkflowTests(unittest.TestCase):
 
     def test_western_first_contact_templates_use_tracking_links_and_no_price(self):
         rows={row['id']:row for row in app.template_rows()}
-        for code,country in (('us','美国'),('ca','加拿大'),('de','德国'),('dk','丹麦')):
+        for code,country in (('us','美国'),('ca','加拿大')):
             template=rows['outreach-en-west-'+code]
             self.assertEqual(template['country'],country)
             self.assertIn('utm_campaign='+code+'_agency_2026q4',template['body'])
             self.assertNotIn('JPY',template['body']);self.assertNotIn('rate sheet',template['body'].lower())
             self.assertIn('contracts hotels in Japan',template['body'])
+        self.assertNotIn('outreach-en-west-de',rows);self.assertNotIn('outreach-en-west-dk',rows)
 
     def test_contact_refresh_failure_keeps_original_roster(self):
         original=app.contacts()

@@ -42,7 +42,7 @@
 | 泰国（泰文合作方式） | https://hiwin-partners.com/th/travel-agency-partnership/?utm_source=email&utm_medium=outreach&utm_campaign=th_agency_2026q4 |
 
 ## 北美／欧洲开发邮件（2026 年第 4 季起；美、加、德、丹各一个活动名，GA4 里按市场分开看）
-英文页面。邮件工具里已有四个国家绑定模板「English · 欧美首次合作 · 美国／加拿大／德国／丹麦」，正文链接就是下面这些；换国家请换模板，不要只改链接。
+英文页面。邮件工具里现有两个国家绑定模板「English · 欧美首次合作 · 美国／加拿大」，正文链接就是下面这些（德国、丹麦模板已于 2026-10-20 删除，欧洲暂停；两条链接保留，方便周报对照历史数据）；换国家请换模板，不要只改链接。
 | 市场 | 合作方式（正文第一个链接） | 首页 |
 |---|---|---|
 | 美国 | https://hiwin-partners.com/en/travel-agency-partnership/?utm_source=email&utm_medium=outreach&utm_campaign=us_agency_2026q4 | https://hiwin-partners.com/en/?utm_source=email&utm_medium=outreach&utm_campaign=us_agency_2026q4 |
