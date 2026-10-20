@@ -67,6 +67,7 @@
 |---|---|
 | LINE 发给台湾同业 | https://hiwin-partners.com/tw/travel-agency-partnership/?utm_source=line&utm_medium=messaging&utm_campaign=agency_followup |
 | WhatsApp 发给东南亚同业 | https://hiwin-partners.com/en/travel-agency-partnership/?utm_source=whatsapp&utm_medium=messaging&utm_campaign=agency_followup |
+| LINE 发给泰国同业（泰文合作方式） | https://hiwin-partners.com/th/travel-agency-partnership/?utm_source=line&utm_medium=messaging&utm_campaign=th_agency_2026q4 |
 
 ## 新开一个活动时怎么写
 照这个格式，只改 campaign 那一段：`utm_source=来源&utm_medium=媒介&utm_campaign=活动名`
