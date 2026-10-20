@@ -11,31 +11,98 @@ function lockControls(){for(const control of document.querySelectorAll('.compose
 function pendingAccount(){return !!($('accountEmail').value.trim()||$('accountLabel').value.trim());}
 function lockMailControls(){for(const control of document.querySelectorAll('.mail-control'))control.disabled=sending||accountBusy||contactUploading;$('inbox').disabled=sending||accountBusy;const pending=pendingAccount();$('connect').disabled=sending||accountBusy||contactUploading||pending;$('password').disabled=sending||accountBusy||pending;$('accountPendingNotice').hidden=!pending;lockContactControls();}
 function countryLabel(country){return country==='测试'?'🧪 测试邮箱':country;}
-function notice(message){$('notice').textContent=message;$('notice').hidden=false;}
+// 'error' (red) and 'result' notes stay until closed; plain progress notes clear themselves so they stop covering the page.
+let noticeTimer=null;
+function notice(message,kind='info'){clearTimeout(noticeTimer);$('notice').textContent=message;$('noticeBar').classList.toggle('notice-error',kind==='error');$('noticeBar').hidden=false;if(kind==='info')noticeTimer=setTimeout(()=>{$('noticeBar').hidden=true;},20000);}
+$('noticeClose').onclick=()=>{clearTimeout(noticeTimer);$('noticeBar').hidden=true;};
 function el(tag,text){const element=document.createElement(tag);if(text!==undefined)element.textContent=text;return element;}
 async function api(path,data){if(data!==undefined&&state&&['connect','preview','approve','send-check','send','schedule','inbox'].includes(path))data={...data,sender:state.sender};const response=await fetch('/api/'+path,{method:data===undefined?'GET':'POST',headers:{'X-Local-Token':token,'Content-Type':'application/json'},body:data===undefined?undefined:JSON.stringify(data)});const result=await response.json();if(!response.ok)throw Error(result.error||'请求失败');return result;}
-async function perform(button,action){button.disabled=true;try{await action();}catch(error){notice(error.message);}finally{if(button.id==='deleteSelectedRecords')renderRecords();else if(button.id!=='send'&&button.id!=='approve')button.disabled=button.classList.contains('compose-field')?composeLocked():button.classList.contains('mail-control')?(accountBusy||sending):sending;}}
-function invalidate(){revision++;batch=null;$('review').hidden=true;$('send').disabled=true;$('approval').checked=false;$('approval').disabled=false;$('approve').disabled=true;}
+async function perform(button,action){button.disabled=true;try{await action();}catch(error){notice(error.message,'error');}finally{if(button.id==='deleteSelectedRecords')renderRecords();else if(button.id!=='send'&&button.id!=='approve')button.disabled=button.classList.contains('compose-field')?composeLocked():button.classList.contains('mail-control')?(accountBusy||sending):sending;}}
+function invalidate(){revision++;batch=null;$('review').hidden=true;$('send').disabled=true;$('approval').checked=false;$('approval').disabled=false;$('approve').disabled=true;$('approve').textContent='批准本批';}
 function markDirty(){dirty=true;updateActivityHint();$('templateDirty').textContent='· 未保存修改';$('templateDirty').classList.add('dirty');invalidate();}
-function composeData(){return {activity_id:currentActivityId(),name:$('templateName').value,language:$('templateLanguage').value,country:$('templateCountry').value,subject:$('subject').value,body:$('body').value,links:$('links').value,attachments:attachments.map(item=>item.id)};}
+function composeData(){return {activity_id:currentActivityId(),name:$('templateName').value,folder:$('templateFolder').value.trim(),language:$('templateLanguage').value,country:$('templateCountry').value,subject:$('subject').value,body:$('body').value,links:$('links').value,attachments:attachments.map(item=>item.id)};}
 function stashDraft(){if(currentTemplate)drafts.set(currentTemplate+'|'+$('templateCountry').value,{...composeData(),attachments:attachments.map(item=>({...item})),dirty});}
 function templateActivityId(template){return template.activity_id||'first-contact';}
 function templateMatchesActivity(template){return template.id==='test-en'||templateActivityId(template)===currentActivityId();}
 function currentPurposeTemplates(){return (state?.templates||[]).filter(template=>template.id!=='test-en'&&templateMatchesActivity(template));}
+// Folders: an explicit folder wins; otherwise templates group by market so the list stays short.
+const ARCHIVE_FOLDER='已归档',GENERAL_FOLDER='通用',TEST_FOLDER='测试邮箱专用';
+const WESTERN_COUNTRIES=new Set(['美国','加拿大','德国','丹麦','英国','法国','荷兰','瑞典','挪威','芬兰','瑞士','奥地利','比利时','爱尔兰','意大利','西班牙']);
+function marketFolder(country){return WESTERN_COUNTRIES.has(country)?'欧美':country;}
+function templateFolder(template){
+ const explicit=String(template.folder||'').trim();if(explicit)return explicit;
+ if(template.id==='test-en')return TEST_FOLDER;
+ if(template.country)return marketFolder(template.country);
+ if(/欧美/.test(template.name))return '欧美';
+ if(/台灣|台湾/.test(template.name))return '台湾';
+ return GENERAL_FOLDER;
+}
+function isArchived(template){return !!template&&templateFolder(template)===ARCHIVE_FOLDER;}
+const folderOpenState=new Map();
+function sortedFolders(folders){
+ const first=marketFolder($('contactCountry').value),rank=name=>name===first?0:name===GENERAL_FOLDER?2:name===TEST_FOLDER?3:name===ARCHIVE_FOLDER?4:1;
+ return [...folders].sort(([a],[b])=>rank(a)-rank(b)||a.localeCompare(b,'zh'));
+}
+function templatePlaceholder(business){return currentTemplate?'草稿已保留 · 请选择本轮模板':business.length?'请选择本轮模板':'本轮暂无模板 · 可另存新模板';}
+function renderTemplatePicker(){
+ if(!state)return;
+ const business=currentPurposeTemplates(),test=$('contactCountry').value==='测试'?state.templates.find(template=>template.id==='test-en'):null;
+ const visible=[...business,...(test?[test]:[])],current=visible.find(template=>template.id===currentTemplate);
+ $('templatePickerFolder').hidden=!current;$('templatePickerFolder').textContent=current?templateFolder(current):'';
+ $('templatePickerName').textContent=current?current.name:templatePlaceholder(business);$('templatePickerButton').classList.toggle('is-empty',!current);
+ const keywords=$('templateSearch').value.trim().toLowerCase().split(/\s+/).filter(Boolean),folders=new Map();
+ for(const template of visible){
+  const folder=templateFolder(template),text=[template.name,template.country,template.language,folder].join(' ').toLowerCase();
+  if(!keywords.every(keyword=>text.includes(keyword)))continue;
+  if(!folders.has(folder))folders.set(folder,[]);folders.get(folder).push(template);
+ }
+ const list=$('templateFolders'),openAll=!!keywords.length||visible.length<=6,defaultOpen=new Set([current&&templateFolder(current),marketFolder($('contactCountry').value)]);
+ list.replaceChildren();
+ for(const [folder,items] of sortedFolders(folders)){
+  const box=el('details'),summary=el('summary'),count=el('span',items.length+' 个');
+  box.className='template-folder'+(folder===ARCHIVE_FOLDER?' archived':'');
+  box.open=openAll||(folderOpenState.get(folder)??(defaultOpen.has(folder)&&folder!==ARCHIVE_FOLDER));
+  count.className='folder-count';summary.append(el('span',folder),count);
+  summary.onclick=()=>{if(!keywords.length)folderOpenState.set(folder,!box.open);};box.append(summary);
+  for(const template of items){
+   const option=el('button');option.type='button';option.className='template-option'+(template.id===currentTemplate?' current':'')+(template.id==='test-en'?' test-option':'');
+   option.setAttribute('aria-current',template.id===currentTemplate?'true':'false');
+   option.append(el('strong',template.name),el('small',[template.country||'不绑定国家',template.language,template.attachments?.length?'附件 '+template.attachments.length+' 个':''].filter(Boolean).join(' · ')));
+   option.onclick=()=>chooseTemplate(template.id);box.append(option);
+  }
+  list.append(box);
+ }
+ if(!folders.size){const empty=el('p',visible.length?'没有匹配的模板':'本轮暂无模板，可在下方编辑后「另存为新模板」。');empty.className='empty';list.append(empty);}
+}
+function setTemplatePicker(open){
+ if(open&&$('templatePickerButton').disabled)return;
+ $('templatePickerPanel').hidden=!open;$('templatePickerButton').setAttribute('aria-expanded',String(open));
+ if(open){$('templateSearch').value='';renderTemplatePicker();$('templateSearch').focus();}
+}
+function chooseTemplate(ident){setTemplatePicker(false);if(ident===currentTemplate)return;$('template').value=ident;$('template').onchange();}
 function renderTemplateOptions(){
  if(!state)return;
  const options=$('template'),business=currentPurposeTemplates(),test=$('contactCountry').value==='测试'?state.templates.find(template=>template.id==='test-en'):null;
  const visible=[...business,...(test?[test]:[])],matches=visible.some(template=>template.id===currentTemplate);
  options.replaceChildren();
- if(!matches){const placeholder=el('option',currentTemplate?'草稿已保留 · 请选择本轮模板':business.length?'请选择本轮模板':'本轮暂无模板 · 可另存新模板');placeholder.value='';placeholder.disabled=true;options.append(placeholder);}
+ if(!matches){const placeholder=el('option',templatePlaceholder(business));placeholder.value='';placeholder.disabled=true;options.append(placeholder);}
  for(const template of business){const option=el('option',(template.country?'['+template.country+'] ':'[通用] ')+template.name);option.value=template.id;options.append(option);}
  if(test){const group=el('optgroup');group.label='测试邮箱专用';const option=el('option','🧪 '+test.name);option.value=test.id;option.classList.add('test-option');group.append(option);options.append(group);}
  options.value=matches?currentTemplate:'';
  const stored=state.templates.find(template=>template.id===currentTemplate);
  $('templateFilterHint').textContent='仅显示本轮模板 · '+business.length+' 个'+(test?' · 另有测试模板':'')+(!matches&&stored?'；已保留“'+(stored.id==='test-en'?'测试模板':activityName(templateActivityId(stored)))+'”草稿，请选择本轮模板。':'');
+ const folders=new Set([...state.templates.map(templateFolder).filter(folder=>folder!==TEST_FOLDER),ARCHIVE_FOLDER]);
+ $('templateFolderSuggestions').replaceChildren(...[...folders].map(folder=>{const option=el('option');option.value=folder;return option;}));
+ renderTemplatePicker();updateComposeActions();
+}
+function updateComposeActions(){
+ if(!state)return;const count=state.contacts.filter(contact=>selected.has(contact.id)).length,template=state.templates.find(item=>item.id===currentTemplate);
+ $('actionRecipients').textContent=count?'已选 '+count+' 个收件人':'先勾选收件人';
+ $('actionTemplate').textContent='模板：'+(template?template.name:'未选择')+(dirty?' · 有未保存修改':'');
+ $('saveTemplate').textContent=dirty?'保存修改':'保存模板';$('saveTemplate').classList.toggle('needs-save',dirty);
 }
 function updateWebsiteHint(){const country=$('templateCountry').value||$('contactCountry').value;const url=state.partner_websites[country]||'https://hiwin-partners.com/en';$('websiteHint').textContent=country?'此国家网站：'+url+'。模板中的 {{partner_website}} 会自动替换。':'通用模板：每封按收件人国家选择网站，无对应版本用英文。';}
-function loadTemplate(ident,scope){const stored=state.templates.find(item=>item.id===ident);if(!stored)return;const key=ident+'|'+(scope===undefined?(stored.country||''):scope);currentTemplate=ident;const template=drafts.get(key)||stored;$('templateName').value=template.name;$('templateLanguage').value=template.language;$('templateCountry').value=scope===undefined?(template.country||''):scope;$('subject').value=template.subject;$('body').value=template.body;$('links').value=template.links||'';attachments=(template.attachments||[]).map(item=>({...item}));dirty=!!template.dirty;$('templateDirty').textContent=dirty?'· 未保存修改':'';$('templateDirty').classList.toggle('dirty',dirty);$('template').classList.toggle('test-template',ident==='test-en');$('testTemplateNotice').hidden=ident!=='test-en';renderTemplateOptions();renderAttachments();updateWebsiteHint();updateActivityHint();invalidate();}
+function loadTemplate(ident,scope){const stored=state.templates.find(item=>item.id===ident);if(!stored)return;const key=ident+'|'+(scope===undefined?(stored.country||''):scope);currentTemplate=ident;const template=drafts.get(key)||stored;$('templateName').value=template.name;$('templateFolder').value=template.folder||'';$('templateFolder').placeholder='留空自动归类：'+templateFolder({...stored,folder:''});$('templateLanguage').value=template.language;$('templateCountry').value=scope===undefined?(template.country||''):scope;$('subject').value=template.subject;$('body').value=template.body;$('links').value=template.links||'';attachments=(template.attachments||[]).map(item=>({...item}));dirty=!!template.dirty;$('templateDirty').textContent=dirty?'· 未保存修改':'';$('templateDirty').classList.toggle('dirty',dirty);$('template').classList.toggle('test-template',ident==='test-en');$('testTemplateNotice').hidden=ident!=='test-en';renderTemplateOptions();renderAttachments();updateWebsiteHint();updateActivityHint();invalidate();}
 function currentActivityId(){return $('activity').value||'first-contact';}
 function activityName(id){return (state?.activities||[]).find(item=>item.id===id)?.name||(id?'未知活动':'历史发送（活动未标记）');}
 function renderActivities(){
@@ -51,22 +118,22 @@ function recommendedTemplate(country=$('contactCountry').value){
  const activity=currentActivityId(),rows=state.templates||[];
  if(country==='测试')return rows.find(item=>item.id==='test-en');
  const mapped=state.activity_country_templates?.[activity]?.[country];
- if(mapped){const preferred=rows.find(item=>item.id===mapped&&item.activity_id===activity);if(preferred)return preferred;}
+ if(mapped){const preferred=rows.find(item=>item.id===mapped&&item.activity_id===activity);if(preferred&&!isArchived(preferred))return preferred;}
  const saved=rows.find(item=>item.id===state.country_templates?.[country]);
- if(saved&&(saved.activity_id===activity||activity==='first-contact'&&!saved.activity_id))return saved;
- const eligible=rows.filter(item=>item.id!=='test-en'&&item.activity_id===activity);
+ if(saved&&!isArchived(saved)&&(saved.activity_id===activity||activity==='first-contact'&&!saved.activity_id))return saved;
+ const eligible=rows.filter(item=>item.id!=='test-en'&&item.activity_id===activity&&!isArchived(item));
  const language=country==='台湾'?'zh':'en';
  const match=eligible.find(item=>item.country===country&&country)||eligible.find(item=>!item.country&&(language==='zh'?/中文|zh/i:/English|en/i).test(item.language));
  if(match)return match;
  // Compatibility for old untagged introductory templates only.
- if(activity==='first-contact')return rows.find(item=>item.id===(country==='台湾'?'outreach-zh-TW':'outreach-en'));
- return null;
+ const legacy=activity==='first-contact'?rows.find(item=>item.id===(country==='台湾'?'outreach-zh-TW':'outreach-en')):null;
+ return isArchived(legacy)?null:legacy;
 }
 function updateActivityHint(){
  if(!state)return;const template=recommendedTemplate(),stored=state.templates.find(item=>item.id===currentTemplate);
  const purpose=state.activities.find(item=>item.id===currentActivityId())?.purpose||'';
  $('activityHint').textContent=purpose+(template?' · 推荐：'+template.name:' · 当前国家尚无对应模板，请选择或另存合适模板。')+(dirty?' · 正文有未保存修改，已保留。':'')+(stored&&!templateMatchesActivity(stored)?' · 当前模板属于“'+activityName(templateActivityId(stored))+'”，请切换。':'');
- $('useRecommendedTemplate').disabled=!template||composeLocked();
+ $('useRecommendedTemplate').disabled=!template||composeLocked();updateComposeActions();
 }
 function loadCountryTemplate(country){
  renderTemplateOptions();updateWebsiteHint();updateActivityHint();
@@ -151,7 +218,7 @@ function entitySummaryText(rows,mailboxKey){
  }
  return [`${companies.size} 家已关联公司`,...(categories.internal.size?[`${categories.internal.size} 个内部邮箱`]:[]),...(categories.test.size?[`${categories.test.size} 个测试邮箱`]:[]),...(categories.unconfirmed.size?[`${categories.unconfirmed.size} 个待确认归属邮箱`]:[]),`${mailboxes.size} 个邮箱`].join(' · ');
 }
-function updateSelection(){const rows=state.contacts.filter(contact=>selected.has(contact.id));$('selectedCount').textContent='已选择 '+entitySummaryText(rows,'email')+' · '+rows.length+' 个联系人';const byCountry=new Map();for(const row of rows)byCountry.set(row.country,(byCountry.get(row.country)||0)+1);const hidden=rows.filter(row=>!matchesContact(row)).length;$('selectedSummary').textContent=rows.length?[...byCountry].map(([country,count])=>country+' '+count+' 个').join(' · ')+(hidden?`；其中 ${hidden} 个在当前筛选之外`:''):'先勾选需要联系的机构';renderSelectedContacts(rows);const testRows=rows.filter(row=>row.country==='测试');$('testSelectionNotice').hidden=!testRows.length;$('testSelectionNotice').textContent=testRows.length===rows.length?'🧪 已选测试邮箱 · 本批只做测试发送。':'⚠️ 同时选中了测试邮箱和正式机构，请清空已选并分批发送。';document.querySelector('.selection-bar').classList.toggle('test-selection',testRows.length>0);$('preview').disabled=!rows.length||composeLocked();$('refreshContacts').disabled=composeLocked()||!state.sheet_configured;$('deleteSelectedContacts').disabled=!rows.length||composeLocked();}
+function updateSelection(){const rows=state.contacts.filter(contact=>selected.has(contact.id));$('selectedCount').textContent='已选择 '+entitySummaryText(rows,'email')+' · '+rows.length+' 个联系人';const byCountry=new Map();for(const row of rows)byCountry.set(row.country,(byCountry.get(row.country)||0)+1);const hidden=rows.filter(row=>!matchesContact(row)).length;$('selectedSummary').textContent=rows.length?[...byCountry].map(([country,count])=>country+' '+count+' 个').join(' · ')+(hidden?`；其中 ${hidden} 个在当前筛选之外`:''):'先勾选需要联系的机构';renderSelectedContacts(rows);const testRows=rows.filter(row=>row.country==='测试');$('testSelectionNotice').hidden=!testRows.length;$('testSelectionNotice').textContent=testRows.length===rows.length?'🧪 已选测试邮箱 · 本批只做测试发送。':'⚠️ 同时选中了测试邮箱和正式机构，请清空已选并分批发送。';document.querySelector('.selection-bar').classList.toggle('test-selection',testRows.length>0);$('preview').disabled=!rows.length||composeLocked();$('refreshContacts').disabled=composeLocked()||!state.sheet_configured;$('deleteSelectedContacts').disabled=!rows.length||composeLocked();updateComposeActions();}
 async function removeContacts(ids){
  if(composeLocked())return;
  const rows=state.contacts.filter(row=>ids.includes(row.id));
@@ -224,8 +291,8 @@ function recordMatchesView(message,view){
  if(view==='history')return !message.activity_id;
  return true;
 }
-function filteredRecords(){
- const country=$('recordCountry').value,sender=$('recordSender').value,type=$('recordType').value,activity=$('recordActivity').value,group=$('recordGroup').value,view=$('recordView').value;
+function filteredRecords(view=$('recordView').value){
+ const country=$('recordCountry').value,sender=$('recordSender').value,type=$('recordType').value,activity=$('recordActivity').value,group=$('recordGroup').value;
  const keywords=$('recordSearch').value.trim().toLowerCase().split(/\s+/).filter(Boolean),members=contactGroupMembers.get(group);
  const emails=new Set(state.contacts.filter(item=>members?.has(item.id)).map(item=>item.email.toLowerCase()));
  const accounts=new Map(state.mail_accounts.map(account=>[account.email,account.label]));
@@ -299,7 +366,7 @@ function showRecordDetail(message){
  const evidence=message.reply_detail;
  if(evidence){const detail=el('dl');detail.className='mail-metadata';for(const [label,value] of [['来信人',evidence.sender],['来信主题',evidence.subject],['收到时间',recordTime(evidence.received_at,message)],['检测时间',recordTime(evidence.detected_at,message)],['关联依据',evidence.match_reason]])if(value)detail.append(el('dt',label),el('dd',value));content.append(detail);const text=evidence.text;if(text)content.append(el('pre',text));else content.append(el('p','已保存关联信息，未保存这封来信的正文。'));}
  else if(message.reply_at||hasReply(message))content.append(el('p','历史记录已保存来信状态，但未保存来信正文与详细证据。请在邮箱核对。'));
- else content.append(el('p','当前未检测到可关联的回复，可点击“检查当前邮箱回复与退信”更新。'));
+ else content.append(el('p','当前未检测到可关联的回复，可点击“检查回复与退信”更新。'));
  content.append(el('h3','记录信息'),el('p',(message.sheet_synced?'Sheet 已同步':'Sheet 待同步')+' · 邮件 ID：'+message.id));
  if(!$('recordDetail').open)$('recordDetail').showModal();
 }
@@ -310,8 +377,13 @@ function renderRecords(){
  const pageSize=Number($('recordPageSize').value)||5,pages=Math.max(1,Math.ceil(rows.length/pageSize));recordPage=Math.max(1,Math.min(recordPage,pages));
  const start=(recordPage-1)*pageSize,pageRows=rows.slice(start,start+pageSize),pageIds=pageRows.filter(row=>row.can_delete).map(row=>row.id);
  $('recordCount').textContent=`当前筛选 ${entitySummaryText(rows,'recipient')} · ${rows.length} 封邮件；显示 ${rows.length?start+1:0}–${start+pageRows.length} 封 / 全部 ${state.messages.length} 封`;
- $('recordSummary').replaceChildren();
- for(const [view,label,count] of [['','全部',rows.length],['unreplied','已发待回复',rows.filter(row=>recordMatchesView(row,'unreplied')).length],['replied','已有回复',rows.filter(row=>recordMatchesView(row,'replied')).length],['errors','需核对',rows.filter(row=>recordMatchesView(row,'errors')).length],['unsynced','待同步',rows.filter(row=>recordMatchesView(row,'unsynced')).length]]){const item=el('span',label+' '+count+' 封');item.className='summary-count';$('recordSummary').append(item);}
+ // Counts ignore the 重点记录 view so each chip shows its own total and works as a one-click filter.
+ const scope=filteredRecords(''),currentView=$('recordView').value;$('recordSummary').replaceChildren();
+ for(const [view,label] of [['','全部'],['unreplied','已发待回复'],['replied','已有回复'],['errors','需核对'],['unsynced','待同步']]){
+  const item=el('button',label+' '+(view?scope.filter(row=>recordMatchesView(row,view)).length:scope.length)+' 封');item.type='button';
+  item.className='summary-count'+(view===currentView?' active':'');item.setAttribute('aria-pressed',String(view===currentView));
+  item.onclick=()=>{$('recordView').value=view;$('recordView').onchange();};$('recordSummary').append(item);
+ }
  $('recordPageInfo').textContent=`第 ${recordPage} / ${pages} 页`;$('recordPrev').disabled=recordPage<=1;$('recordNext').disabled=recordPage>=pages;
  $('recordSelectedCount').textContent='已选 '+recordSelected.size+' 条';$('deleteSelectedRecords').disabled=!recordSelected.size||sending||recordsBusy;$('clearRecordSelection').disabled=!recordSelected.size||sending||recordsBusy;$('selectFilteredRecords').disabled=!available.size||sending||recordsBusy;
  const pageCheck=$('recordSelectPage');pageCheck.disabled=!pageIds.length||sending||recordsBusy;pageCheck.checked=!!pageIds.length&&pageIds.every(id=>recordSelected.has(id));pageCheck.indeterminate=pageIds.some(id=>recordSelected.has(id))&&!pageCheck.checked;
@@ -326,7 +398,7 @@ function renderRecords(){
   const reply=el('div');reply.append(el('small','回复'),el('strong',message.reply_status||'尚未检测到关联回复'));if(message.reply_at)reply.append(el('small','检测时间：'+recordTime(message.reply_at,message)));statuses.append(delivery,reply);row.append(statuses);
   const next=el('p','下一步：'+nextAction(message));next.className='record-next';row.append(next);
   if(message.stop_label){const stopped=el('p',message.stop_label+' · '+(message.stop_next_action||'人工核对后联系'));stopped.className='stop-warning';row.append(stopped);}
-  const actions=el('div');actions.className='record-actions';const detail=el('button','查看邮件详情');detail.onclick=()=>showRecordDetail(message);actions.append(detail);
+  const actions=el('div');actions.className='record-actions';const detail=el('button','查看邮件详情');detail.className='secondary';detail.onclick=()=>showRecordDetail(message);actions.append(detail);
   if(!message.sheet_synced){const sync=el('span','Sheet 待同步');sync.className='hint';actions.append(sync);}
   if(message.can_cancel_schedule){const cancel=el('button','取消定时');cancel.className='secondary';cancel.disabled=sending||recordsBusy;cancel.onclick=()=>perform(cancel,async()=>{const count=state.messages.filter(item=>item.batch_id===message.batch_id).length;if(!window.confirm('取消本批 '+count+' 封邮件的定时发送？\n已发出的邮件不受影响。'))return;await api('schedule/cancel',{id:message.batch_id});notice('定时任务已取消。');await refreshRecords();});actions.append(cancel);}
   else{const maintenance=el('details');maintenance.className='record-row-maintenance';maintenance.append(el('summary','更多操作'));const stop=el('button','手动停止联系');stop.className='secondary';stop.disabled=sending||recordsBusy||message.schedule_status==='running';stop.onclick=()=>perform(stop,async()=>{if(!window.confirm('手动停止联系 '+message.recipient+'？\n这会保留发送与回复记录，并将邮箱排除在“全选本轮未发”之外。'))return;await api('stop',{email:message.recipient,reason:'manual'});notice('已标记手动停止联系。');await refresh();});const remove=el('button','删除本地记录');remove.className='secondary';remove.disabled=!message.can_delete||sending||recordsBusy;remove.onclick=()=>perform(remove,async()=>{if(!window.confirm('删除这条本地记录？\n'+message.name+' · '+message.recipient+'\n'+message.subject+'\n\n已发邮件和 Google Sheet 日志保留。'))return;await deleteRecordIds([message.id]);});maintenance.append(stop,remove);actions.append(maintenance);}
@@ -346,7 +418,15 @@ function updateSendMode(){
  $('send').textContent=scheduled?'安排定时发送（已批准）':isTest?'发送测试邮件（已批准）':'发送正式邮件（已批准）';
  if(scheduled){const parts=clockParts(new Date(Date.now()+60000).toISOString(),'Asia/Tokyo');$('scheduleAt').min=parts.year+'-'+parts.month+'-'+parts.day+'T'+parts.hour+':'+parts.minute;}
 }
-async function refresh(){const initialLoad=!state,previousSender=state&&state.sender;state=await api('state');if(previousSender&&previousSender!==state.sender){invalidate();$('password').value='';notice('发件员工已切换为 '+state.sender+'，请重新预览确认。');}renderAccounts();renderContactConfig();$('sheetLink').hidden=!state.spreadsheet_url;if(state.spreadsheet_url)$('sheetLink').href=state.spreadsheet_url;$('mailBadge').textContent=state.mail_connected?'公司邮箱已连接':'公司邮箱未连接';$('sheetBadge').textContent=state.sheet_saved?'Sheet 已保存 · 自动恢复':state.sheet_configured?'Sheet 已配置 · 尚未保存':'Sheet 未连接';if(document.activeElement!==$('bridgeUrl'))$('bridgeUrl').value=state.bridge_url||'';$('bridgeSecret').placeholder=state.sheet_configured?'已有密钥，可留空；更换地址时重新填写':'首次填写同步密钥';$('restoreSheet').hidden=!state.sheet_store_error;$('sheetHelp').textContent=state.sheet_store_error||(state.sheet_saved?'连接配置已保存在本机 Mac 钥匙串，重新启动会自动恢复。':'部署地址与同步密钥保存到本机 Mac 钥匙串；下次启动自动恢复。');renderCountries();renderContactGroups();renderRecordGroups();renderActivities();renderTemplateOptions();let removed=false;for(const ident of [...selected]){const contact=state.contacts.find(row=>row.id===ident);if(!contact||!contact.email){selected.delete(ident);removed=true;}}if(removed)invalidate();$('contactsSourceHint').textContent='名单从 Google Sheet「邮件跟踪」读取，本地新增仅保存在工具。表格支持批量新增，每行填写独立机构编号、机构名称、国家、收件邮箱，再点击上方刷新。'+(state.contacts_refreshed_at?' 上次刷新：'+new Date(state.contacts_refreshed_at).toLocaleString('zh-CN',{timeZone:'Asia/Tokyo'})+'（东京）':' 尚未从云端刷新。');renderContacts();renderRecords();renderSendProgress(state.send_progress);if(!state.templates.some(item=>item.id===currentTemplate)){const preferred=state.templates.find(item=>item.id===state.preferred_template);if(initialLoad&&preferred?.activity_id)$('activity').value=preferred.activity_id;const choice=preferred&&templateMatchesActivity(preferred)?preferred:recommendedTemplate()||currentPurposeTemplates()[0];if(choice&&!dirty)loadTemplate(choice.id);renderContacts();}renderTemplateOptions();updateWebsiteHint();}
+async function refresh(){const initialLoad=!state,previousSender=state&&state.sender;state=await api('state');if(previousSender&&previousSender!==state.sender){invalidate();$('password').value='';notice('发件员工已切换为 '+state.sender+'，请重新预览确认。');}renderAccounts();renderContactConfig();$('sheetLink').hidden=!state.spreadsheet_url;if(state.spreadsheet_url)$('sheetLink').href=state.spreadsheet_url;$('mailBadge').textContent=state.mail_connected?'✓ 公司邮箱已连接':'⚠️ 公司邮箱未连接 · 点此连接';$('mailBadge').classList.toggle('badge-ok',state.mail_connected);$('mailBadge').classList.toggle('badge-warn',!state.mail_connected);renderSendConnection();
+ // Older servers ignore the folder field, so only offer editing when templates carry it.
+ $('templateFolderField').hidden=!state.templates.some(item=>'folder' in item);$('sheetBadge').textContent=state.sheet_saved?'Sheet 已保存 · 自动恢复':state.sheet_configured?'Sheet 已配置 · 尚未保存':'Sheet 未连接';if(document.activeElement!==$('bridgeUrl'))$('bridgeUrl').value=state.bridge_url||'';$('bridgeSecret').placeholder=state.sheet_configured?'已有密钥，可留空；更换地址时重新填写':'首次填写同步密钥';$('restoreSheet').hidden=!state.sheet_store_error;$('sheetHelp').textContent=state.sheet_store_error||(state.sheet_saved?'连接配置已保存在本机 Mac 钥匙串，重新启动会自动恢复。':'部署地址与同步密钥保存到本机 Mac 钥匙串；下次启动自动恢复。');renderCountries();renderContactGroups();renderRecordGroups();renderActivities();renderTemplateOptions();let removed=false;for(const ident of [...selected]){const contact=state.contacts.find(row=>row.id===ident);if(!contact||!contact.email){selected.delete(ident);removed=true;}}if(removed)invalidate();$('contactsSourceHint').textContent='名单从 Google Sheet「邮件跟踪」读取，本地新增仅保存在工具。表格支持批量新增，每行填写独立机构编号、机构名称、国家、收件邮箱，再点击上方刷新。'+(state.contacts_refreshed_at?' 上次刷新：'+new Date(state.contacts_refreshed_at).toLocaleString('zh-CN',{timeZone:'Asia/Tokyo'})+'（东京）':' 尚未从云端刷新。');renderContacts();renderRecords();renderSendProgress(state.send_progress);if(!state.templates.some(item=>item.id===currentTemplate)){const preferred=state.templates.find(item=>item.id===state.preferred_template);if(initialLoad&&preferred?.activity_id)$('activity').value=preferred.activity_id;const choice=preferred&&templateMatchesActivity(preferred)?preferred:recommendedTemplate()||currentPurposeTemplates()[0];if(choice&&!dirty)loadTemplate(choice.id);renderContacts();}renderTemplateOptions();updateWebsiteHint();}
+function renderSendConnection(){
+ if(!state)return;const connected=state.mail_connected;
+ $('sendConnection').classList.toggle('is-missing',!connected);$('inlineConnectForm').hidden=connected;
+ $('sendConnectionText').textContent=connected?'✓ 将从 '+state.sender+' 发送，邮箱已连接。':'⚠️ '+state.sender+' 还没有连接。预览和批准不受影响，发送前请在这里输入这个员工的邮箱密码。';
+}
+function openConnectionSettings(){$('connectionSettings').open=true;$('connectionSettings').scrollIntoView({behavior:'smooth',block:'start'});$('password').focus({preventScroll:true});}
 function freezeCompose(value){sending=value;lockControls();lockMailControls();lockContactControls();$('inbox').disabled=value;$('sync').disabled=value;renderRecords();}
 let sessionSendBatch='';
 function renderSendProgress(progress){
@@ -372,7 +452,11 @@ async function pollSendProgress(ident){
  catch(error){if(sending)$('sendProgressDetail').textContent='进度暂时无法更新，邮件仍在后台处理；请勿重复发送。';}
  finally{sendProgressPolling=false;}
 }
-for(const id of ['subject','body','links','templateName','templateLanguage'])$(id).addEventListener('input',markDirty);
+for(const id of ['subject','body','links','templateName','templateFolder','templateLanguage'])$(id).addEventListener('input',markDirty);
+$('templatePickerButton').onclick=()=>setTemplatePicker($('templatePickerPanel').hidden);
+$('templateSearch').oninput=renderTemplatePicker;
+document.addEventListener('click',event=>{if(!$('templatePickerPanel').hidden&&!$('templatePicker').contains(event.target))setTemplatePicker(false);});
+document.addEventListener('keydown',event=>{if(event.key==='Escape'&&!$('templatePickerPanel').hidden){setTemplatePicker(false);$('templatePickerButton').focus();}});
 function replaceBodyRange(start,end,text,selectionStart=start,selectionEnd=selectionStart+text.length){
  const body=$('body');body.setRangeText(text,start,end,'select');body.focus();body.setSelectionRange(selectionStart,selectionEnd);markDirty();
 }
@@ -404,10 +488,10 @@ function insertBodyLink(){
  const body=$('body'),start=body.selectionStart,end=body.selectionEnd,selectedText=body.value.slice(start,end).trim();
  const label=selectedText&&!/[\[\]\n]/.test(selectedText)?selectedText:(window.prompt('邮件里显示的文字（例如：查看合作方案）',selectedText.replace(/[\[\]\n]/g,' ').trim()||'')||'').trim();
  if(!label)return body.focus();
- if(/[\[\]\n]/.test(label))return notice('显示文字不能包含 [ ] 或换行。');
+ if(/[\[\]\n]/.test(label))return notice('显示文字不能包含 [ ] 或换行。','error');
  const url=(window.prompt('链接网址（以 https:// 开头）','https://')||'').trim();
  if(!url||url==='https://')return body.focus();
- if(!/^https?:\/\/[^\s()<>]+$/i.test(url))return notice('网址需以 http:// 或 https:// 开头，且不能包含空格或括号。');
+ if(!/^https?:\/\/[^\s()<>]+$/i.test(url))return notice('网址需以 http:// 或 https:// 开头，且不能包含空格或括号。','error');
  const text='['+label+']('+url+')';replaceBodyRange(start,end,text,start+1,start+1+label.length);
 }
 for(const id of ['formatBold','formatItalic','formatHeading','formatLink'])$(id).onmousedown=event=>event.preventDefault();
@@ -420,9 +504,9 @@ $('template').onchange=()=>{stashDraft();loadTemplate($('template').value);};$('
 $('contactGroup').onchange=changeContactGroup;
 $('onlyWithEmail').onchange=renderContacts;
 $('selectUnsent').onclick=()=>{selected.clear();for(const row of visibleContacts().filter(eligibleUnsent))selected.add(row.id);invalidate();renderContacts();};$('selectVisible').onclick=()=>{const rows=visibleContacts().filter(row=>row.email);for(const row of rows)selected.add(row.id);invalidate();renderContacts();};$('clearSelection').onclick=()=>{selected.clear();invalidate();renderContacts();};
-$('refreshContacts').onclick=()=>perform($('refreshContacts'),async()=>{refreshingContacts=true;invalidate();lockControls();const button=$('refreshContacts');button.textContent='正在读取 Google Sheet…';notice('正在读取 Google Sheet 的联系人名单…');try{const result=await api('contacts/refresh',{});await refresh();notice(`联系人已刷新：云端 ${result.count} 家 · 新增 ${result.added} · 更新 ${result.updated} · 移除 ${result.removed}`+(result.invalid_emails?`；${result.invalid_emails} 行邮箱格式无效，请在表格修正。`:'。')+' 本地新增联系人、发送记录与停止联系标记已保留；请重新预览。');}finally{refreshingContacts=false;button.textContent='从 Google Sheet 刷新联系人';lockControls();}});
+$('refreshContacts').onclick=()=>perform($('refreshContacts'),async()=>{refreshingContacts=true;invalidate();lockControls();const button=$('refreshContacts');button.textContent='正在读取 Google Sheet…';notice('正在读取 Google Sheet 的联系人名单…');try{const result=await api('contacts/refresh',{});await refresh();notice(`联系人已刷新：云端 ${result.count} 家 · 新增 ${result.added} · 更新 ${result.updated} · 移除 ${result.removed}`+(result.invalid_emails?`；${result.invalid_emails} 行邮箱格式无效，请在表格修正。`:'。')+' 本地新增联系人、发送记录与停止联系标记已保留；请重新预览。','result');}finally{refreshingContacts=false;button.textContent='从 Google Sheet 刷新联系人';lockControls();}});
 $('addContact').onclick=()=>perform($('addContact'),async()=>{const added=await api('contact',{name:$('newAgency').value,email:$('newEmail').value,country:$('newCountry').value});await refresh();$('contactGroup').value='';$('contactCountry').value=added.country;loadCountryTemplate(added.country);$('search').value='';if(added.email)selected.add(added.id);invalidate();renderContacts();$('newAgency').value='';$('newEmail').value='';notice('已新增 '+added.name+'（'+added.country+'）');});
-async function persistTemplate(asNew){const stored=state.templates.find(item=>item.id===currentTemplate);if(!asNew&&stored&&!templateMatchesActivity(stored))return notice('当前模板属于“'+activityName(templateActivityId(stored))+'”。请使用“另存为新模板”保存到本轮联系目的，保留原模板。');saving=true;lockControls();try{const result=await api('template',{...composeData(),id:asNew?null:currentTemplate});drafts.delete(currentTemplate+'|'+$('templateCountry').value);drafts.delete(result.id+'|'+$('templateCountry').value);currentTemplate=result.id;await refresh();loadTemplate(result.id);notice('模板已保存，主题、正文、附件与链接将在下次启动时保留。');}finally{saving=false;lockControls();}}
+async function persistTemplate(asNew){const stored=state.templates.find(item=>item.id===currentTemplate);if(!asNew&&stored&&!templateMatchesActivity(stored))return notice('当前模板属于“'+activityName(templateActivityId(stored))+'”。请使用“另存为新模板”保存到本轮联系目的，保留原模板。','error');saving=true;lockControls();try{const result=await api('template',{...composeData(),id:asNew?null:currentTemplate});drafts.delete(currentTemplate+'|'+$('templateCountry').value);drafts.delete(result.id+'|'+$('templateCountry').value);currentTemplate=result.id;await refresh();loadTemplate(result.id);notice('模板已保存，主题、正文、附件与链接将在下次启动时保留。');}finally{saving=false;lockControls();}}
 async function deleteCurrentTemplate(){
  const template=state.templates.find(item=>item.id===currentTemplate);if(!template)return;
  if(!window.confirm('删除模板「'+template.name+'」'+(template.country?'（'+template.country+'）':'')+'？\n'+(dirty?'未保存的修改也会丢弃。\n':'')+'发送记录与附件文件保留；该国家将使用通用模板。'))return;
@@ -437,29 +521,38 @@ function setWhatsappFields(value){$('whatsappPhone').value=value.phone||'';$('wh
 function lockContactControls(){for(const control of document.querySelectorAll('.contact-control'))control.disabled=sending||accountBusy||contactUploading;}
 function renderContactConfig(force=false){lockContactControls();if(!force&&contactFormSender===state.sender)return;contactFormSender=state.sender;const profile=state.contact_config;$('contactSettingsSender').textContent='当前 sender：'+state.sender;$('signatureName').value=profile.signature_name||'';$('contactEmail').value=profile.contact_email||'';$('lineUrl').value=profile.line_url||'';setQrPreview('lineQrPreview',profile.line_qr);$('sharedWhatsapp').checked=profile.use_shared_whatsapp;whatsappDrafts={shared:{...profile.shared_whatsapp},own:{...profile.whatsapp}};setWhatsappFields(profile.effective_whatsapp);}
 $('sharedWhatsapp').onchange=()=>{whatsappDrafts[$('sharedWhatsapp').checked?'own':'shared']=whatsappFields();setWhatsappFields(whatsappDrafts[$('sharedWhatsapp').checked?'shared':'own']);invalidate();};
-for(const [input,preview] of [['lineQrUpload','lineQrPreview'],['whatsappQrUpload','whatsappQrPreview']])$(input).onchange=async()=>{const file=$(input).files[0];if(!file)return;if(file.size>2*1024*1024){$(input).value='';return notice('二维码图片不能超过 2 MB。');}contactUploading=true;lockContactControls();lockMailControls();try{const uploaded=await api('contact-qr',{content:await fileBase64(file)});setQrPreview(preview,uploaded.file);invalidate();notice('二维码已上传，请点击「保存联系方式与二维码」。');}catch(error){notice(error.message);}finally{contactUploading=false;$(input).value='';lockContactControls();lockMailControls();}};
+for(const [input,preview] of [['lineQrUpload','lineQrPreview'],['whatsappQrUpload','whatsappQrPreview']])$(input).onchange=async()=>{const file=$(input).files[0];if(!file)return;if(file.size>2*1024*1024){$(input).value='';return notice('二维码图片不能超过 2 MB。','error');}contactUploading=true;lockContactControls();lockMailControls();try{const uploaded=await api('contact-qr',{content:await fileBase64(file)});setQrPreview(preview,uploaded.file);invalidate();notice('二维码已上传，请点击「保存联系方式与二维码」。');}catch(error){notice(error.message,'error');}finally{contactUploading=false;$(input).value='';lockContactControls();lockMailControls();}};
 $('removeLineQr').onclick=()=>{setQrPreview('lineQrPreview','');invalidate();notice('LINE 二维码已移除，请保存联系方式。');};
 $('removeWhatsappQr').onclick=()=>{setQrPreview('whatsappQrPreview','');invalidate();notice('WhatsApp 二维码已移除，请保存联系方式。');};
 for(const id of ['signatureName','contactEmail','lineUrl','whatsappPhone','whatsappUrl'])$(id).oninput=invalidate;
 $('saveContactSettings').onclick=()=>perform($('saveContactSettings'),async()=>{await api('contact-config',{sender:state.sender,signature_name:$('signatureName').value,contact_email:$('contactEmail').value,line_url:$('lineUrl').value,line_qr:$('lineQrPreview').dataset.file||'',use_shared_whatsapp:$('sharedWhatsapp').checked,whatsapp:whatsappFields()});invalidate();await refresh();renderContactConfig(true);notice('联系方式与二维码已保存。请重新生成预览并批准。');});
-$('files').onchange=async()=>{const files=[...$('files').files];if(!files.length)return;if(attachments.reduce((sum,file)=>sum+file.size,0)+files.reduce((sum,file)=>sum+file.size,0)>MAX_BYTES){$('files').value='';return notice('每封邮件附件合计不能超过 10 MB。');}uploading=true;lockControls();try{for(const file of files){notice('正在保存附件：'+file.name);const saved=await api('upload',{name:file.name,content:await fileBase64(file)});attachments.push(saved);markDirty();renderAttachments();}notice('附件已添加。可保存到当前模板，并在发送前预览检查。');}catch(error){notice(error.message);}finally{uploading=false;$('files').value='';lockControls();}};
-async function accountAction(action){accountBusy=true;invalidate();lockControls();lockMailControls();try{await action();}catch(error){notice(error.message);}finally{try{await refresh();}catch(error){notice(error.message);}accountBusy=false;lockControls();lockMailControls();}}
+$('files').onchange=async()=>{const files=[...$('files').files];if(!files.length)return;if(attachments.reduce((sum,file)=>sum+file.size,0)+files.reduce((sum,file)=>sum+file.size,0)>MAX_BYTES){$('files').value='';return notice('每封邮件附件合计不能超过 10 MB。','error');}uploading=true;lockControls();try{for(const file of files){notice('正在保存附件：'+file.name);const saved=await api('upload',{name:file.name,content:await fileBase64(file)});attachments.push(saved);markDirty();renderAttachments();}notice('附件已添加。可保存到当前模板，并在发送前预览检查。');}catch(error){notice(error.message,'error');}finally{uploading=false;$('files').value='';lockControls();}};
+async function accountAction(action){accountBusy=true;invalidate();lockControls();lockMailControls();try{await action();}catch(error){notice(error.message,'error');}finally{try{await refresh();}catch(error){notice(error.message,'error');}accountBusy=false;lockControls();lockMailControls();}}
 const accountChannel=typeof BroadcastChannel!=='undefined'?new BroadcastChannel('hiwin-mail-account'):null;
 let syncingAccount=false;
-async function syncAccountView(){if(!state||sending||accountBusy||syncingAccount)return;syncingAccount=true;try{await refresh();}catch(error){notice(error.message);}finally{syncingAccount=false;}}
+async function syncAccountView(){if(!state||sending||accountBusy||syncingAccount)return;syncingAccount=true;try{await refresh();}catch(error){notice(error.message,'error');}finally{syncingAccount=false;}}
 if(accountChannel)accountChannel.onmessage=syncAccountView;
 window.addEventListener('focus',syncAccountView);
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)syncAccountView();});
 $('mailAccount').onchange=()=>{const email=$('mailAccount').value;$('password').value='';return accountAction(async()=>{const result=await api('account/select',{email});if(accountChannel)accountChannel.postMessage({sender:result.sender});notice(result.message);});};
 $('addAccount').onclick=()=>accountAction(async()=>{const added=await api('account',{email:$('accountEmail').value,label:$('accountLabel').value});const result=await api('account/select',{email:added.email});if(accountChannel)accountChannel.postMessage({sender:result.sender});$('password').value='';$('accountEmail').value='';$('accountLabel').value='';$('addAccountDetails').open=false;notice(result.message);});
 $('accountEmail').oninput=$('accountLabel').oninput=()=>{$('password').value='';lockMailControls();};
-$('connect').onclick=()=>{if(pendingAccount()){notice('请先点击「保存并切换员工」，然后输入这个员工自己的密码。');return;}const password=$('password').value;if(!password){notice(state.mail_connected?'当前员工本次运行已连接，可以直接预览发送。重新验证时请先输入密码。':'请输入 '+state.sender+' 自己的邮箱密码。');return;}$('password').value='';return accountAction(async()=>{const result=await api('connect',{password});if(accountChannel)accountChannel.postMessage({sender:state.sender});notice(result.message);});};
+$('connect').onclick=()=>{if(pendingAccount()){notice('请先点击「保存并切换员工」，然后输入这个员工自己的密码。','error');return;}const password=$('password').value;if(!password){notice(state.mail_connected?'当前员工本次运行已连接，可以直接预览发送。重新验证时请先输入密码。':'请输入 '+state.sender+' 自己的邮箱密码。',state.mail_connected?'info':'error');return;}$('password').value='';return accountAction(async()=>{const result=await api('connect',{password});if(accountChannel)accountChannel.postMessage({sender:state.sender});notice(result.message);});};
+// Connecting the same sender keeps an approved batch, so the inline form skips accountAction's invalidate().
+$('inlineConnect').onclick=()=>perform($('inlineConnect'),async()=>{
+ const password=$('inlinePassword').value;if(!password)return notice('请输入 '+state.sender+' 自己的邮箱密码。','error');
+ $('inlinePassword').value='';accountBusy=true;lockMailControls();$('send').disabled=true;
+ try{const result=await api('connect',{password});if(accountChannel)accountChannel.postMessage({sender:state.sender});notice(result.message);}
+ finally{await refresh().catch(()=>{});accountBusy=false;lockMailControls();$('send').disabled=!(batch&&$('approval').disabled);}
+});
+$('password').onkeydown=$('inlinePassword').onkeydown=event=>{if(event.key==='Enter'){event.preventDefault();(event.target.id==='password'?$('connect'):$('inlineConnect')).click();}};
+$('mailBadge').onclick=openConnectionSettings;
 $('generateSecret').onclick=()=>perform($('generateSecret'),async()=>{const bytes=crypto.getRandomValues(new Uint8Array(32)),key=Array.from(bytes,value=>value.toString(16).padStart(2,'0')).join('');$('bridgeSecret').value=key;try{await navigator.clipboard.writeText(key);notice('同步密钥已生成并复制。请粘贴到 Google 的 BRIDGE_SECRET 属性并保存，再回此页保存连接。');}catch(error){$('bridgeSecret').type='text';$('bridgeSecret').select();notice('密钥已生成，请手动复制选中的内容，粘贴到 Google 的 BRIDGE_SECRET 属性。');}});
-$('connectSheet').onclick=()=>perform($('connectSheet'),async()=>{const result=await api('sheet',{url:$('bridgeUrl').value,secret:$('bridgeSecret').value});$('bridgeSecret').value='';$('bridgeSecret').type='password';notice(result.ok?'Sheet 连接已保存到 Mac 钥匙串并通过验证；下次启动会自动恢复。':'连接已保存到 Mac 钥匙串；'+result.error);await refresh();});
-$('restoreSheet').onclick=()=>perform($('restoreSheet'),async()=>{const result=await api('sheet/restore',{});notice(result.ok?'已恢复保存的 Sheet 连接':result.error);await refresh();});
-$('preview').onclick=()=>perform($('preview'),async()=>{const stored=state.templates.find(item=>item.id===currentTemplate);if(stored&&!templateMatchesActivity(stored))return notice('当前模板属于“'+activityName(templateActivityId(stored))+'”，请先选择本轮对应模板。');const scope=$('templateCountry').value,rows=state.contacts.filter(item=>selected.has(item.id));if(scope&&rows.some(item=>item.country!=='测试'&&item.country!==scope))return notice('当前模板绑定“'+countryLabel(scope)+'”，但所选联系人包含其他国家。请切换合适模板，或将模板保存范围设为通用并核对语言。');const version=revision;const result=await api('preview',{...composeData(),ids:[...selected],template_id:currentTemplate});if(version!==revision)return notice('准备预览时内容发生变化，请重新生成。');batch=result;$('previewList').replaceChildren();const isTest=batch.messages.every(message=>messageType(message)==='test');$('testReviewNotice').hidden=!isTest;updateSendMode();$('previewDetails').open=true;$('previewToggle').textContent='邮件预览 · '+batch.messages.length+' 封（点击展开 / 收起）';$('send').classList.toggle('test-send',isTest);const countries=[...new Set(batch.messages.map(message=>countryLabel(message.country)))];$('reviewSummary').textContent=`目的：${activityName(batch.activity_id||currentActivityId())} · ${batch.messages.length} 封邮件 · ${countries.join('、')} · 模板：${batch.template_name||$('templateName').value} · 语言：${batch.language||'未指定'}`;$('reviewAttachments').replaceChildren();const files=el('p',batch.attachments.length?'本批附件：'+batch.attachments.map(file=>file.name+'（'+sizeLabel(file.size)+'）').join('、'):'本批无附件');files.className='hint';$('reviewAttachments').append(files);for(const [index,message] of batch.messages.entries()){const view=el('details');view.open=index===0;view.className='preview'+(messageType(message)==='test'?' test-preview':'');view.append(el('summary',message.name+' → '+message.recipient),el('p','国家 / 地区：'+countryLabel(message.country)+' · 发件人：'+batch.sender),el('p','主题：'+message.subject),mailBody(message));for(const link of message.links){const anchor=el('a',link.label||link.url);anchor.href=link.url;anchor.target='_blank';anchor.rel='noopener';view.append(anchor,el('br'));}const qrInfo=batch.line_signature||batch.whatsapp_signature;if(qrInfo){const signature=el('div');signature.className='line-signature';const anchor=el('a');anchor.href=qrInfo.url;anchor.target='_blank';anchor.rel='noopener';const qr=el('img');qr.src=qrInfo.preview_url;qr.width=180;qr.height=180;qr.alt=qrInfo.channel==='WhatsApp'?'WhatsApp QR Code':'LINE 加好友 QR Code';anchor.append(qr);signature.append(anchor,el('p',qrInfo.channel==='WhatsApp'?'Scan the QR code or click to contact us on WhatsApp.':'掃描 QR Code 或點擊 LINE 連結加入好友。'));view.append(signature);}$('previewList').append(view);}$('review').hidden=false;$('approval').checked=false;$('approval').disabled=false;$('approve').disabled=true;$('send').disabled=true;$('reviewState').textContent='未批准。请核对以上实际内容、链接、附件与二维码。';$('review').scrollIntoView({behavior:'smooth',block:'start'});});
+$('connectSheet').onclick=()=>perform($('connectSheet'),async()=>{const result=await api('sheet',{url:$('bridgeUrl').value,secret:$('bridgeSecret').value});$('bridgeSecret').value='';$('bridgeSecret').type='password';notice(result.ok?'Sheet 连接已保存到 Mac 钥匙串并通过验证；下次启动会自动恢复。':'连接已保存到 Mac 钥匙串；'+result.error,result.ok?'info':'error');await refresh();});
+$('restoreSheet').onclick=()=>perform($('restoreSheet'),async()=>{const result=await api('sheet/restore',{});notice(result.ok?'已恢复保存的 Sheet 连接':result.error,result.ok?'info':'error');await refresh();});
+$('preview').onclick=()=>perform($('preview'),async()=>{const stored=state.templates.find(item=>item.id===currentTemplate);if(stored&&!templateMatchesActivity(stored))return notice('当前模板属于“'+activityName(templateActivityId(stored))+'”，请先选择本轮对应模板。','error');const scope=$('templateCountry').value,rows=state.contacts.filter(item=>selected.has(item.id));if(scope&&rows.some(item=>item.country!=='测试'&&item.country!==scope))return notice('当前模板绑定“'+countryLabel(scope)+'”，但所选联系人包含其他国家。请切换合适模板，或将模板保存范围设为通用并核对语言。','error');const version=revision;const result=await api('preview',{...composeData(),ids:[...selected],template_id:currentTemplate});if(version!==revision)return notice('准备预览时内容发生变化，请重新生成。','error');batch=result;$('previewList').replaceChildren();const isTest=batch.messages.every(message=>messageType(message)==='test');$('testReviewNotice').hidden=!isTest;updateSendMode();$('previewDetails').open=true;$('previewToggle').textContent='邮件预览 · '+batch.messages.length+' 封（点击展开 / 收起）';$('send').classList.toggle('test-send',isTest);const countries=[...new Set(batch.messages.map(message=>countryLabel(message.country)))];$('reviewSummary').textContent=`目的：${activityName(batch.activity_id||currentActivityId())} · ${batch.messages.length} 封邮件 · ${countries.join('、')} · 模板：${batch.template_name||$('templateName').value} · 语言：${batch.language||'未指定'}`;$('reviewAttachments').replaceChildren();const files=el('p',batch.attachments.length?'本批附件：'+batch.attachments.map(file=>file.name+'（'+sizeLabel(file.size)+'）').join('、'):'本批无附件');files.className='hint';$('reviewAttachments').append(files);for(const [index,message] of batch.messages.entries()){const view=el('details');view.open=index===0;view.className='preview'+(messageType(message)==='test'?' test-preview':'');view.append(el('summary',message.name+' → '+message.recipient),el('p','国家 / 地区：'+countryLabel(message.country)+' · 发件人：'+batch.sender),el('p','主题：'+message.subject),mailBody(message));for(const link of message.links){const anchor=el('a',link.label||link.url);anchor.href=link.url;anchor.target='_blank';anchor.rel='noopener';view.append(anchor,el('br'));}const qrInfo=batch.line_signature||batch.whatsapp_signature;if(qrInfo){const signature=el('div');signature.className='line-signature';const anchor=el('a');anchor.href=qrInfo.url;anchor.target='_blank';anchor.rel='noopener';const qr=el('img');qr.src=qrInfo.preview_url;qr.width=180;qr.height=180;qr.alt=qrInfo.channel==='WhatsApp'?'WhatsApp QR Code':'LINE 加好友 QR Code';anchor.append(qr);signature.append(anchor,el('p',qrInfo.channel==='WhatsApp'?'Scan the QR code or click to contact us on WhatsApp.':'掃描 QR Code 或點擊 LINE 連結加入好友。'));view.append(signature);}$('previewList').append(view);}$('review').hidden=false;$('approval').checked=false;$('approval').disabled=false;$('approve').disabled=true;$('send').disabled=true;$('reviewState').textContent='未批准。请核对以上实际内容、链接、附件与二维码。';$('review').scrollIntoView({behavior:'smooth',block:'start'});});
 $('approval').onchange=()=>{$('approve').disabled=!$('approval').checked||!batch;};
-$('approve').onclick=()=>perform($('approve'),async()=>{if(!batch)return;const version=revision,ident=batch.id;await api('approve',{id:ident,digest:batch.digest});if(version!==revision||!batch||batch.id!==ident)return;$('send').disabled=false;$('previewDetails').open=false;$('reviewState').textContent='本批 '+batch.messages.length+' 封已批准。可展开预览核对，或选择发送方式。';$('approval').disabled=true;$('review').scrollIntoView({behavior:'smooth',block:'start'});});
+$('approve').onclick=()=>perform($('approve'),async()=>{if(!batch)return;const version=revision,ident=batch.id;await api('approve',{id:ident,digest:batch.digest});if(version!==revision||!batch||batch.id!==ident)return;$('send').disabled=false;$('approve').textContent='已批准 ✓';$('previewDetails').open=false;$('reviewState').textContent='本批 '+batch.messages.length+' 封已批准。可展开预览核对，或选择发送方式。';$('approval').disabled=true;$('send').scrollIntoView({behavior:'smooth',block:'center'});});
 $('sendMode').onchange=updateSendMode;
 $('recordSelectPage').onchange=()=>{const size=Number($('recordPageSize').value),rows=filteredRecords().slice((recordPage-1)*size,recordPage*size);for(const row of rows.filter(item=>item.can_delete))$('recordSelectPage').checked?recordSelected.add(row.id):recordSelected.delete(row.id);renderRecords();};
 $('selectFilteredRecords').onclick=()=>{for(const row of filteredRecords().filter(item=>item.can_delete))recordSelected.add(row.id);renderRecords();};
@@ -468,7 +561,7 @@ $('deleteSelectedRecords').onclick=()=>perform($('deleteSelectedRecords'),async(
 $('send').onclick=()=>perform($('send'),async()=>{
  if(!batch)return;
  const ident=batch.id,scheduled=$('sendMode').value==='scheduled',scheduleAt=$('scheduleAt').value;
- if(scheduled&&!scheduleAt){$('send').disabled=false;return notice('请选择日本时间的定时发送时间。');}
+ if(scheduled&&!scheduleAt){$('send').disabled=false;return notice('请选择日本时间的定时发送时间。','error');}
  freezeCompose(true);$('sendMode').disabled=$('scheduleAt').disabled=true;
  try{
   const request={id:ident,...(scheduled?{scheduled_at:scheduleAt}:{})},review=await api('send-check',request);
@@ -481,13 +574,13 @@ $('send').onclick=()=>perform($('send'),async()=>{
   $('reviewState').textContent=scheduled?'正在保存定时任务…':'发送中，请保持工具运行。';
   if(!scheduled){sessionSendBatch=ident;renderSendProgress({batch_id:ident,status:'sending',total:batch.messages.length,processed:0,accepted:0,failed:0,uncertain:0,remaining:batch.messages.length,sheet_pending:0});sendProgressTimer=setInterval(()=>pollSendProgress(ident),1000);}
   const result=await api(scheduled?'schedule':'send',{...request,confirmation:review.digest});batch=null;
-  if(result.sheet_sync&&!result.sheet_sync.ok)notice(result.sheet_sync.error);
+  if(result.sheet_sync&&!result.sheet_sync.ok)notice(result.sheet_sync.error,'error');
   $('reviewState').textContent=scheduled?'定时任务已保存，可在记录中查看或取消。':'执行结束，查看下方发送记录。';$('approval').disabled=false;await refresh();
  }finally{if(sendProgressTimer){clearInterval(sendProgressTimer);sendProgressTimer=null;}freezeCompose(false);$('sendMode').disabled=$('scheduleAt').disabled=false;if(batch&&batch.id===ident)$('send').disabled=false;}
 });
 setInterval(async()=>{
  if(!state||sending||accountBusy||recordsBusy||recordsPolling||document.hidden||(!state.messages.some(row=>['scheduled','awaiting_mail','running'].includes(row.schedule_status))&&state.send_progress?.status!=='sending'))return;
- recordsPolling=true;try{await refreshRecords();}catch(error){notice('定时状态刷新失败，可点击刷新记录。');}finally{recordsPolling=false;}
+ recordsPolling=true;try{await refreshRecords();}catch(error){notice('定时状态刷新失败，可点击刷新记录。','error');}finally{recordsPolling=false;}
 },15000);
 $('inbox').onclick=()=>accountAction(async()=>{
  notice(`正在检查 ${state.sender} 最近 30 天的回复与退信，请保持工具运行。`);
@@ -495,7 +588,7 @@ $('inbox').onclick=()=>accountAction(async()=>{
   `文件夹：${result.folders.map(folder=>folder.name+(folder.ok?'':'（未完成）')).join('、')}。`];
  if(result.warnings.length)details.push(...result.warnings);
  details.push(result.sheet_sync.ok?`Google Sheet 已同步，本次同步 ${result.sheet_sync.count} 条记录。`:result.sheet_sync.error);
- notice(details.join(' '));
-});$('sync').onclick=()=>perform($('sync'),async()=>{const result=await api('sync',{});notice(result.ok?`已同步 ${result.count} 条记录`:result.error);await refresh();});$('refresh').onclick=()=>perform($('refresh'),refresh);
+ notice(details.join(' '),result.complete&&result.sheet_sync.ok?'result':'error');
+});$('sync').onclick=()=>perform($('sync'),async()=>{const result=await api('sync',{});notice(result.ok?`已同步 ${result.count} 条记录`:result.error,result.ok?'info':'error');await refresh();});$('refresh').onclick=()=>perform($('refresh'),refresh);
 window.addEventListener('beforeunload',event=>{if(dirty||composeLocked()){event.preventDefault();event.returnValue='';}});
-refresh().catch(error=>notice(error.message));
+refresh().catch(error=>notice(error.message,'error'));

@@ -12,7 +12,7 @@ function ui(){
  const get=id=>{if(!elements.has(id))elements.set(id,element());return elements.get(id);};
  const context=vm.createContext({document:{getElementById:get,createElement:element,createTextNode:text=>({textContent:text}),
   querySelector:selector=>selector.startsWith('meta')?{content:'test-token'}:get(selector),querySelectorAll:()=>[],addEventListener(){}},
-  window:{addEventListener(){},confirm(){return false;}},fetch:()=>new Promise(()=>{}),setInterval(){},clearInterval(){},Intl,Date,console});
+  window:{addEventListener(){},confirm(){return false;}},fetch:()=>new Promise(()=>{}),setInterval(){},clearInterval(){},setTimeout(){return 1;},clearTimeout(){},Intl,Date,console});
  vm.runInContext(readFileSync(__dirname+'/app.js','utf8'),context);
  const run=source=>vm.runInContext(source,context);
  run(`state={contacts:[
@@ -232,4 +232,43 @@ test('untagged introductory draft is not silently retagged or previewed for anot
  get('activity').value='itf-2026';get('activity').onchange();assert.equal(get('template').value,'');
  await get('preview').onclick();assert.match(get('notice').textContent,/当前模板属于“首次合作介绍”/);
  await get('saveTemplate').onclick();assert.match(get('notice').textContent,/另存为新模板/);assert.equal(run("state.templates.find(item=>item.id==='legacy').activity_id"),undefined);
+});
+
+test('template picker groups by folder, puts archived last and never recommends archived templates',()=>{
+ const {get,run,json,text}=ui();
+ run(`state.templates.push(
+  {id:'us',activity_id:'first-contact',name:'Western US',country:'美国',language:'English',subject:'s',body:'b',attachments:[]},
+  {id:'ca-zh',activity_id:'first-contact',name:'繁體中文 · 欧美首次合作 · 美加中文团',country:'',language:'繁體中文',subject:'s',body:'b',attachments:[]},
+  {id:'tw-general',activity_id:'first-contact',name:'繁體中文 · 台灣 合作',country:'',language:'繁體中文',subject:'s',body:'b',attachments:[]},
+  {id:'tw-old',activity_id:'first-contact',name:'Old Taiwan',country:'台湾',language:'繁體中文',folder:'已归档',subject:'s',body:'b',attachments:[]},
+  {id:'custom',activity_id:'first-contact',name:'Custom folder',country:'台湾',language:'繁體中文',folder:'ITF 展后',subject:'s',body:'b',attachments:[]});`);
+ assert.deepEqual(json("state.templates.filter(t=>t.activity_id==='first-contact').map(templateFolder)"),['通用','欧美','欧美','台湾','已归档','ITF 展后']);
+ get('activity').value='first-contact';get('activity').onchange();get('contactCountry').value='台湾';get('contactCountry').onchange();
+ const folders=get('templateFolders').children.map(box=>box.children[0].children[0].textContent);
+ assert.equal(folders[0],'台湾');assert.equal(folders.at(-1),'已归档');assert.ok(folders.indexOf('通用')>folders.indexOf('欧美'));
+ assert.notEqual(run('currentTemplate'),'tw-old');
+ run("state.country_templates['台湾']='tw-old';");assert.equal(run("recommendedTemplate('台湾')?.id"),'custom');
+ get('templateSearch').value='custom';run('renderTemplatePicker()');
+ assert.deepEqual(get('templateFolders').children.map(box=>box.open),[true]);assert.match(text(get('templateFolders')),/Custom folder/);
+});
+
+test('choosing a template from the picker loads it and keeps the sticky action summary current',()=>{
+ const {get,run}=ui();run("selected.add('NEW');updateSelection();chooseTemplate('itf-en');");
+ assert.equal(run('currentTemplate'),'itf-en');assert.equal(get('body').value,'ITF en body');assert.equal(get('templatePickerName').textContent,'ITF invitation');
+ assert.match(get('actionRecipients').textContent,/已选 1 个收件人/);assert.match(get('actionTemplate').textContent,/ITF invitation/);
+ run("$('body').value='edited';markDirty();");assert.equal(get('saveTemplate').textContent,'保存修改');assert.match(get('actionTemplate').textContent,/未保存修改/);
+});
+
+test('record summary chips count the whole scope and apply their view filter',()=>{
+ const {get,run,json}=ui();run("state.messages[0].reply_status='已回复';renderRecords();");
+ const chip=label=>get('recordSummary').children.find(item=>item.textContent.startsWith(label));
+ chip('已有回复').onclick();assert.equal(get('recordView').value,'replied');assert.deepEqual(json('filteredRecords().map(item=>item.id)'),['old']);
+ assert.match(chip('全部').textContent,/全部 4 封/);assert.match(chip('需核对').textContent,/需核对 1 封/);
+});
+
+test('errors stay visible while ordinary notices are scheduled to close',()=>{
+ const {get,run}=ui();run("setTimeout=()=>{globalThis.timerCount=(globalThis.timerCount||0)+1;return 1;}");
+ run("notice('saved')");assert.equal(run('globalThis.timerCount'),1);
+ run("notice('failed','error')");assert.equal(run('globalThis.timerCount'),1);assert.equal(get('noticeBar').hidden,false);
+ get('noticeClose').onclick();assert.equal(get('noticeBar').hidden,true);
 });

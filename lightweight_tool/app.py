@@ -399,7 +399,7 @@ def initialize():
             if column not in existing:
                 c.execute(f'ALTER TABLE messages ADD COLUMN {column} {definition}')
         existing = {r[1] for r in c.execute('PRAGMA table_info(templates)')}
-        for column in ('country', 'activity_id'):
+        for column in ('country', 'activity_id', 'folder'):
             if column not in existing:
                 c.execute(f"ALTER TABLE templates ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
         for row in c.execute('SELECT email FROM stops').fetchall():
@@ -738,13 +738,17 @@ def save_template(data):
     with LOCK,db() as c:
         if data.get('id') and not c.execute('SELECT 1 FROM templates WHERE id=?',(ident,)).fetchone():
             raise ValueError('模板不存在，请另存为新模板')
-        previous=c.execute('SELECT country,activity_id FROM templates WHERE id=?',(ident,)).fetchone()
+        previous=c.execute('SELECT country,activity_id,folder FROM templates WHERE id=?',(ident,)).fetchone()
         activity_id=str(data.get('activity_id',previous['activity_id'] if previous else '') or '')
         activity_fields(activity_id,allow_empty=True)
+        # Folders only organise the picker; an empty folder means "group by country".
+        folder=str(data.get('folder',previous['folder'] if previous else '') or '').strip()
+        if len(folder)>30 or any(ord(ch)<32 for ch in folder):
+            raise ValueError('模板文件夹名称最多 30 字，不能换行')
         if previous and previous['country']!=country:
             ident='template-'+secrets.token_hex(8)
-        c.execute('INSERT INTO templates(id,name,language,subject,body,links,attachments,country,activity_id) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,language=excluded.language,subject=excluded.subject,body=excluded.body,links=excluded.links,attachments=excluded.attachments,activity_id=excluded.activity_id',
-                  (ident,name,language,subject,body,links,json.dumps([r['id'] for r in attached]),country,activity_id))
+        c.execute('INSERT INTO templates(id,name,language,subject,body,links,attachments,country,activity_id,folder) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,language=excluded.language,subject=excluded.subject,body=excluded.body,links=excluded.links,attachments=excluded.attachments,activity_id=excluded.activity_id,folder=excluded.folder',
+                  (ident,name,language,subject,body,links,json.dumps([r['id'] for r in attached]),country,activity_id,folder))
         set_pref(c,'template',ident)
         if country:
             if activity_id:

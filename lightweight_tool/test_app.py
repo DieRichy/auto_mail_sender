@@ -681,6 +681,15 @@ class WorkflowTests(unittest.TestCase):
     def test_saved_secret_not_reused_for_new_endpoint(self):
         app.SETTINGS.update(bridge_url='https://script.google.com/macros/s/OLD/exec',bridge_secret='x'*64)
         with self.assertRaises(ValueError):app.configure_sheet({'url':'https://script.google.com/macros/s/NEW/exec','secret':''})
+    def test_template_folder_persists_and_is_kept_when_omitted(self):
+        template=app.save_template({'name':'泰國舊版','language':'English','subject':'s','body':'b','folder':' 已归档 ','attachments':[]})
+        app.initialize();folder=lambda:next(row for row in app.template_rows() if row['id']==template['id'])['folder']
+        self.assertEqual(folder(),'已归档')
+        app.save_template({'id':template['id'],'name':'泰國舊版','language':'English','subject':'s2','body':'b','attachments':[]})
+        self.assertEqual(folder(),'已归档')
+        app.save_template({'id':template['id'],'name':'泰國舊版','language':'English','subject':'s2','body':'b','folder':'','attachments':[]})
+        self.assertEqual(folder(),'')
+        with self.assertRaises(ValueError):app.save_template({'name':'x','language':'English','subject':'s','body':'b','folder':'a\nb','attachments':[]})
     def test_country_and_template_survive_reinitialization(self):
         contact=app.add_contact({'country':'臺灣','name':'台灣測試旅行社','email':'taiwan@example.com'})
         template=app.save_template({'name':'台灣客製','language':'繁體中文','subject':'您好 {{agency_name}}','body':'合作洽詢','links':'官網 | https://example.com/hotel','attachments':[]})
