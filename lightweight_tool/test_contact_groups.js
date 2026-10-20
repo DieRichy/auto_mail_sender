@@ -7,12 +7,12 @@ const vm=require('node:vm');
 function ui(){
  const elements=new Map();
  function element(){return {value:'',checked:false,hidden:false,children:[],dataset:{},scrollTop:0,
-  classList:{toggle(){},add(){},remove(){}},append(...items){this.children.push(...items);},
+  classList:{toggle(){},add(){},remove(){}},append(...items){this.children.push(...items);},prepend(...items){this.children.unshift(...items);},
   replaceChildren(...items){this.children=items;},setAttribute(){},removeAttribute(){},addEventListener(){}};}
  const get=id=>{if(!elements.has(id))elements.set(id,element());return elements.get(id);};
  const context=vm.createContext({document:{getElementById:get,createElement:element,createTextNode:text=>({textContent:text}),
   querySelector:selector=>selector.startsWith('meta')?{content:'test-token'}:get(selector),querySelectorAll:()=>[],addEventListener(){}},
-  window:{addEventListener(){}},fetch:()=>new Promise(()=>{}),setInterval(){},clearInterval(){},Intl,console});
+  window:{addEventListener(){}},fetch:()=>new Promise(()=>{}),setInterval(){},clearInterval(){},setTimeout(){return 1;},clearTimeout(){},Intl,console});
  vm.runInContext(readFileSync(__dirname+'/app.js','utf8'),context);
  const run=source=>vm.runInContext(source,context);
  run(`state={contacts:[

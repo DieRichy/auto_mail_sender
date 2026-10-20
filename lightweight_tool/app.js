@@ -10,7 +10,12 @@ function composeLocked(){return sending||uploading||saving||accountBusy||refresh
 function lockControls(){for(const control of document.querySelectorAll('.compose-field'))control.disabled=composeLocked();if(!composeLocked()){renderContacts();renderAttachments();}updateSelection();}
 function pendingAccount(){return !!($('accountEmail').value.trim()||$('accountLabel').value.trim());}
 function lockMailControls(){for(const control of document.querySelectorAll('.mail-control'))control.disabled=sending||accountBusy||contactUploading;$('inbox').disabled=sending||accountBusy;const pending=pendingAccount();$('connect').disabled=sending||accountBusy||contactUploading||pending;$('password').disabled=sending||accountBusy||pending;$('accountPendingNotice').hidden=!pending;lockContactControls();}
-function countryLabel(country){return country==='测试'?'🧪 测试邮箱':country;}
+const COUNTRY_FLAGS={'日本':'🇯🇵','新加坡':'🇸🇬','马来西亚':'🇲🇾','泰国':'🇹🇭','印度尼西亚':'🇮🇩','菲律宾':'🇵🇭','越南':'🇻🇳','柬埔寨':'🇰🇭','缅甸':'🇲🇲','老挝':'🇱🇦','文莱':'🇧🇳','韩国':'🇰🇷','中国':'🇨🇳','香港':'🇭🇰','澳门':'🇲🇴','印度':'🇮🇳','澳大利亚':'🇦🇺','新西兰':'🇳🇿','美国':'🇺🇸','加拿大':'🇨🇦','墨西哥':'🇲🇽','英国':'🇬🇧','德国':'🇩🇪','丹麦':'🇩🇰','法国':'🇫🇷','荷兰':'🇳🇱','瑞典':'🇸🇪','挪威':'🇳🇴','芬兰':'🇫🇮','瑞士':'🇨🇭','奥地利':'🇦🇹','比利时':'🇧🇪','爱尔兰':'🇮🇪','意大利':'🇮🇹','西班牙':'🇪🇸','葡萄牙':'🇵🇹','乌干达':'🇺🇬'};
+// macOS hides the 🇹🇼 emoji in some system regions (it shows as a crossed box), so Taiwan gets a drawn flag wherever HTML is used.
+const TAIWAN_FLAG='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 30 20"><rect width="30" height="20" fill="#fe0000"/><rect width="15" height="10" fill="#000095"/><g transform="translate(7.5 5)"><polygon fill="#fff" points="0.00,-3.60 0.53,-1.98 1.80,-3.12 1.45,-1.45 3.12,-1.80 1.98,-0.53 3.60,0.00 1.98,0.53 3.12,1.80 1.45,1.45 1.80,3.12 0.53,1.98 0.00,3.60 -0.53,1.98 -1.80,3.12 -1.45,1.45 -3.12,1.80 -1.98,0.53 -3.60,0.00 -1.98,-0.53 -3.12,-1.80 -1.45,-1.45 -1.80,-3.12 -0.53,-1.98"/><circle r="1.95" fill="#000095"/><circle r="1.65" fill="#fff"/></g></svg>';
+// Inline SVG markup, because the page's Content-Security-Policy blocks data: images.
+function withFlag(node,country){if(country==='台湾'){const flag=el('span');flag.className='flag-img';flag.setAttribute('aria-hidden','true');flag.innerHTML=TAIWAN_FLAG;node.prepend(flag);}return node;}
+function countryLabel(country){return country==='测试'?'🧪 测试邮箱':COUNTRY_FLAGS[country]?COUNTRY_FLAGS[country]+' '+country:country;}
 // 'error' (red) and 'result' notes stay until closed; plain progress notes clear themselves so they stop covering the page.
 let noticeTimer=null;
 function notice(message,kind='info'){clearTimeout(noticeTimer);$('notice').textContent=message;$('noticeBar').classList.toggle('notice-error',kind==='error');$('noticeBar').hidden=false;if(kind==='info')noticeTimer=setTimeout(()=>{$('noticeBar').hidden=true;},20000);}
@@ -27,13 +32,16 @@ function templateMatchesActivity(template){return template.id==='test-en'||templ
 function currentPurposeTemplates(){return (state?.templates||[]).filter(template=>template.id!=='test-en'&&templateMatchesActivity(template));}
 // Folders: an explicit folder wins; otherwise templates group by market so the list stays short.
 const ARCHIVE_FOLDER='已归档',GENERAL_FOLDER='通用',TEST_FOLDER='测试邮箱专用';
-const WESTERN_COUNTRIES=new Set(['美国','加拿大','德国','丹麦','英国','法国','荷兰','瑞典','挪威','芬兰','瑞士','奥地利','比利时','爱尔兰','意大利','西班牙']);
-function marketFolder(country){return WESTERN_COUNTRIES.has(country)?'欧美':country;}
+const NORTH_AMERICA=new Set(['美国','加拿大','墨西哥']),EUROPE=new Set(['英国','德国','丹麦','法国','荷兰','瑞典','挪威','芬兰','瑞士','奥地利','比利时','爱尔兰','意大利','西班牙','葡萄牙']);
+const FOLDER_ICONS={'北美':'🇺🇸🇨🇦','欧洲':'🇪🇺',[GENERAL_FOLDER]:'🌐',[TEST_FOLDER]:'🧪',[ARCHIVE_FOLDER]:'🗄️'};
+function marketFolder(country){return NORTH_AMERICA.has(country)?'北美':EUROPE.has(country)?'欧洲':country;}
+function folderLabel(folder){const icon=FOLDER_ICONS[folder]||COUNTRY_FLAGS[folder]||(folder==='台湾'?'':'📁');return icon?icon+' '+folder:folder;}
 function templateFolder(template){
  const explicit=String(template.folder||'').trim();if(explicit)return explicit;
  if(template.id==='test-en')return TEST_FOLDER;
  if(template.country)return marketFolder(template.country);
- if(/欧美/.test(template.name))return '欧美';
+ if(/北美|美加|美国|美國|加拿大/.test(template.name))return '北美';
+ if(/欧洲|歐洲|德国|德國|丹麦|丹麥|英国|英國|法国|法國/.test(template.name))return '欧洲';
  if(/台灣|台湾/.test(template.name))return '台湾';
  return GENERAL_FOLDER;
 }
@@ -48,7 +56,7 @@ function renderTemplatePicker(){
  if(!state)return;
  const business=currentPurposeTemplates(),test=$('contactCountry').value==='测试'?state.templates.find(template=>template.id==='test-en'):null;
  const visible=[...business,...(test?[test]:[])],current=visible.find(template=>template.id===currentTemplate);
- $('templatePickerFolder').hidden=!current;$('templatePickerFolder').textContent=current?templateFolder(current):'';
+ const currentFolder=current?templateFolder(current):'';$('templatePickerFolder').hidden=!current;$('templatePickerFolder').textContent=current?folderLabel(currentFolder):'';withFlag($('templatePickerFolder'),currentFolder);
  $('templatePickerName').textContent=current?current.name:templatePlaceholder(business);$('templatePickerButton').classList.toggle('is-empty',!current);
  const keywords=$('templateSearch').value.trim().toLowerCase().split(/\s+/).filter(Boolean),folders=new Map();
  for(const template of visible){
@@ -56,18 +64,19 @@ function renderTemplatePicker(){
   if(!keywords.every(keyword=>text.includes(keyword)))continue;
   if(!folders.has(folder))folders.set(folder,[]);folders.get(folder).push(template);
  }
- const list=$('templateFolders'),openAll=!!keywords.length||visible.length<=6,defaultOpen=new Set([current&&templateFolder(current),marketFolder($('contactCountry').value)]);
+ const recommended=recommendedTemplate()?.id,list=$('templateFolders'),openAll=!!keywords.length||visible.length<=6,defaultOpen=new Set([current&&templateFolder(current),marketFolder($('contactCountry').value)]);
  list.replaceChildren();
  for(const [folder,items] of sortedFolders(folders)){
   const box=el('details'),summary=el('summary'),count=el('span',items.length+' 个');
   box.className='template-folder'+(folder===ARCHIVE_FOLDER?' archived':'');
   box.open=openAll||(folderOpenState.get(folder)??(defaultOpen.has(folder)&&folder!==ARCHIVE_FOLDER));
-  count.className='folder-count';summary.append(el('span',folder),count);
+  count.className='folder-count';summary.append(withFlag(el('span',folderLabel(folder)),folder),count);
   summary.onclick=()=>{if(!keywords.length)folderOpenState.set(folder,!box.open);};box.append(summary);
   for(const template of items){
    const option=el('button');option.type='button';option.className='template-option'+(template.id===currentTemplate?' current':'')+(template.id==='test-en'?' test-option':'');
    option.setAttribute('aria-current',template.id===currentTemplate?'true':'false');
-   option.append(el('strong',template.name),el('small',[template.country||'不绑定国家',template.language,template.attachments?.length?'附件 '+template.attachments.length+' 个':''].filter(Boolean).join(' · ')));
+   const name=el('strong',template.name);if(template.id===recommended){const tag=el('span','⭐ 推荐');tag.className='recommend-tag';name.append(tag);}
+   option.append(name,withFlag(el('small',[template.country?countryLabel(template.country):'不绑定国家',template.language,template.attachments?.length?'附件 '+template.attachments.length+' 个':''].filter(Boolean).join(' · ')),template.country));
    option.onclick=()=>chooseTemplate(template.id);box.append(option);
   }
   list.append(box);
@@ -102,7 +111,7 @@ function updateComposeActions(){
  $('saveTemplate').textContent=dirty?'保存修改':'保存模板';$('saveTemplate').classList.toggle('needs-save',dirty);
 }
 function updateWebsiteHint(){const country=$('templateCountry').value||$('contactCountry').value;const url=state.partner_websites[country]||'https://hiwin-partners.com/en';$('websiteHint').textContent=country?'此国家网站：'+url+'。模板中的 {{partner_website}} 会自动替换。':'通用模板：每封按收件人国家选择网站，无对应版本用英文。';}
-function loadTemplate(ident,scope){const stored=state.templates.find(item=>item.id===ident);if(!stored)return;const key=ident+'|'+(scope===undefined?(stored.country||''):scope);currentTemplate=ident;const template=drafts.get(key)||stored;$('templateName').value=template.name;$('templateFolder').value=template.folder||'';$('templateFolder').placeholder='留空自动归类：'+templateFolder({...stored,folder:''});$('templateLanguage').value=template.language;$('templateCountry').value=scope===undefined?(template.country||''):scope;$('subject').value=template.subject;$('body').value=template.body;$('links').value=template.links||'';attachments=(template.attachments||[]).map(item=>({...item}));dirty=!!template.dirty;$('templateDirty').textContent=dirty?'· 未保存修改':'';$('templateDirty').classList.toggle('dirty',dirty);$('template').classList.toggle('test-template',ident==='test-en');$('testTemplateNotice').hidden=ident!=='test-en';renderTemplateOptions();renderAttachments();updateWebsiteHint();updateActivityHint();invalidate();}
+function loadTemplate(ident,scope){const stored=state.templates.find(item=>item.id===ident);if(!stored)return;const key=ident+'|'+(scope===undefined?(stored.country||''):scope);currentTemplate=ident;const template=drafts.get(key)||stored;$('templateName').value=template.name;$('templateFolder').value=template.folder||'';$('templateFolder').placeholder='留空自动归类：'+templateFolder({...stored,folder:''});$('templateLanguage').value=template.language;$('templateCountry').value=scope===undefined?(template.country||''):scope;$('subject').value=template.subject;$('body').value=template.body;$('links').value=template.links||'';if($('links').value.trim())$('linksDetails').open=true;attachments=(template.attachments||[]).map(item=>({...item}));dirty=!!template.dirty;$('templateDirty').textContent=dirty?'· 未保存修改':'';$('templateDirty').classList.toggle('dirty',dirty);$('template').classList.toggle('test-template',ident==='test-en');$('testTemplateNotice').hidden=ident!=='test-en';renderTemplateOptions();renderAttachments();updateWebsiteHint();updateActivityHint();invalidate();}
 function currentActivityId(){return $('activity').value||'first-contact';}
 function activityName(id){return (state?.activities||[]).find(item=>item.id===id)?.name||(id?'未知活动':'历史发送（活动未标记）');}
 function renderActivities(){
@@ -133,7 +142,7 @@ function updateActivityHint(){
  if(!state)return;const template=recommendedTemplate(),stored=state.templates.find(item=>item.id===currentTemplate);
  const purpose=state.activities.find(item=>item.id===currentActivityId())?.purpose||'';
  $('activityHint').textContent=purpose+(template?' · 推荐：'+template.name:' · 当前国家尚无对应模板，请选择或另存合适模板。')+(dirty?' · 正文有未保存修改，已保留。':'')+(stored&&!templateMatchesActivity(stored)?' · 当前模板属于“'+activityName(templateActivityId(stored))+'”，请切换。':'');
- $('useRecommendedTemplate').disabled=!template||composeLocked();updateComposeActions();
+ $('useRecommendedTemplate').disabled=!template||composeLocked();$('useRecommendedTemplate').hidden=!template||template.id===currentTemplate;updateComposeActions();
 }
 function loadCountryTemplate(country){
  renderTemplateOptions();updateWebsiteHint();updateActivityHint();
@@ -190,7 +199,7 @@ function renderContactGroups(){
 function matchesContact(contact){const group=activeContactGroup();return (!$('contactGroup').value||(group&&(!group.country||contact.country===group.country)&&contactGroupMembers.get(group.id)?.has(contact.id)))&&(!$('contactCountry').value||contact.country===$('contactCountry').value)&&(!$('onlyWithEmail').checked||!!contact.email)&&(contact.name+' '+contact.email).toLowerCase().includes($('search').value.toLowerCase());}
 function changeContactGroup(){
  selected.clear();invalidate();$('search').value='';$('onlyWithEmail').checked=false;
- const group=activeContactGroup();if(group){$('contactCountry').value=group.country||'';$('contactCountry').classList.toggle('test-filter',false);if(group.id.startsWith('itf-'))$('activity').value='itf-2026';if(group.country||group.id.startsWith('itf-'))loadCountryTemplate(group.country||'');else updateWebsiteHint();updateActivityHint();}
+ const group=activeContactGroup();if(group){$('contactCountry').value=group.country||'';$('contactCountry').classList.toggle('test-filter',false);if(group.id.startsWith('itf-')&&currentActivityId()!=='itf-2026'){$('activity').value='itf-2026';notice('已按「'+group.name+'」把本轮联系目的切换为 ITF 展位邀约。');}if(group.country||group.id.startsWith('itf-'))loadCountryTemplate(group.country||'');else updateWebsiteHint();updateActivityHint();}
  renderContacts();
 }
 function changeContactCountry(){
@@ -199,9 +208,9 @@ function changeContactCountry(){
 }
 function visibleContacts(){return state.contacts.filter(matchesContact);}
 function renderSelectedContacts(rows){
- const list=$('selectedContacts'),scrollTop=list.scrollTop;list.replaceChildren();list.hidden=!rows.length;
+ const list=$('selectedContacts'),scrollTop=list.scrollTop;list.replaceChildren();$('selectedDetails').hidden=!rows.length;
  for(const contact of rows){
-  const row=el('li'),info=el('div'),email=el('span',contact.email),detail=el('small',countryLabel(contact.country)+(matchesContact(contact)?'':' · 当前筛选外'));
+  const row=el('li'),info=el('div'),email=el('span',contact.email),detail=withFlag(el('small',countryLabel(contact.country)+(matchesContact(contact)?'':' · 当前筛选外')),contact.country);
   email.className='selected-email';info.append(el('strong',contact.name),email,detail);
   const remove=el('button','取消选择');remove.className='secondary compose-field';remove.disabled=composeLocked();
   remove.setAttribute('aria-label','取消选择：'+contact.name+' · '+contact.email);
@@ -239,7 +248,7 @@ function renderContacts(){
  const active=activeContactGroup();$('contactGroupHint').textContent=active?`${active.name}已加载 ${active.loaded_count} / ${active.total_count} 个联系人。切换快捷名单会清空已选联系人。`:'切换快捷名单会清空已选联系人。';
  const visible=visibleContacts();$('contacts').replaceChildren();
  for(const country of state.countries){const group=visible.filter(contact=>contact.country===country);if(!group.length)continue;
-  const heading=el('div',countryLabel(country)+' · '+group.length+' 个联系人');heading.className='country-heading'+(country==='测试'?' test-heading':'');$('contacts').append(heading);
+  const heading=withFlag(el('div',countryLabel(country)+' · '+group.length+' 个联系人'),country);heading.className='country-heading'+(country==='测试'?' test-heading':'');$('contacts').append(heading);
   for(const contact of group){
    const row=el('div');row.className='contact'+(contact.country==='测试'?' test-contact':'');
    const checkbox=el('input');checkbox.type='checkbox';checkbox.id='contact-'+contact.id;checkbox.checked=selected.has(contact.id);checkbox.disabled=!contact.email||composeLocked();checkbox.className='compose-field';checkbox.onchange=()=>{checkbox.checked?selected.add(contact.id):selected.delete(contact.id);invalidate();updateSelection();};
@@ -373,7 +382,7 @@ function showRecordDetail(message){
 function renderRecords(){
  if(!state)return;const rows=filteredRecords(),available=new Set(rows.filter(row=>row.can_delete).map(row=>row.id));
  for(const id of recordSelected)if(!available.has(id))recordSelected.delete(id);
- $('recordType').classList.toggle('test-filter',$('recordType').value==='test');$('recordCountry').classList.toggle('test-filter',$('recordCountry').value==='测试');$('logs').replaceChildren();
+ $('syncNotice').hidden=!state.messages.some(row=>!row.sheet_synced);$('recordType').classList.toggle('test-filter',$('recordType').value==='test');$('recordCountry').classList.toggle('test-filter',$('recordCountry').value==='测试');$('logs').replaceChildren();
  const pageSize=Number($('recordPageSize').value)||5,pages=Math.max(1,Math.ceil(rows.length/pageSize));recordPage=Math.max(1,Math.min(recordPage,pages));
  const start=(recordPage-1)*pageSize,pageRows=rows.slice(start,start+pageSize),pageIds=pageRows.filter(row=>row.can_delete).map(row=>row.id);
  $('recordCount').textContent=`当前筛选 ${entitySummaryText(rows,'recipient')} · ${rows.length} 封邮件；显示 ${rows.length?start+1:0}–${start+pageRows.length} 封 / 全部 ${state.messages.length} 封`;
@@ -393,7 +402,7 @@ function renderRecords(){
   const recipient=el('div');recipient.className='record-recipient';recipient.append(el('strong',message.name),el('span',message.recipient));
   const badge=el('span',activityName(message.activity_id));badge.className='record-kind';header.append(check,recipient,badge);row.append(header);
   const subject=el('p',message.subject);subject.className='record-subject';row.append(subject);
-  const account=state.mail_accounts.find(item=>item.email===message.sender);const meta=el('p',countryLabel(message.country)+' · '+(account?account.label+' <'+message.sender+'>':message.sender)+' · '+(messageType(message)==='test'?'测试发送':'正式发送')+(message.template_name?' · '+message.template_name:''));meta.className='hint';row.append(meta);
+  const account=state.mail_accounts.find(item=>item.email===message.sender);const meta=withFlag(el('p',countryLabel(message.country)+' · '+(account?account.label+' <'+message.sender+'>':message.sender)+' · '+(messageType(message)==='test'?'测试发送':'正式发送')+(message.template_name?' · '+message.template_name:'')),message.country);meta.className='hint';row.append(meta);
   const statuses=el('div');statuses.className='record-statuses';const delivery=el('div');delivery.append(el('small','发送'),el('strong',sendStatus(message)));if(message.sent_at)delivery.append(el('small',recordTime(message.sent_at,message)));if(message.scheduled_at)delivery.append(el('small','计划：'+recordTime(message.scheduled_at,message)));if(message.error)delivery.append(el('small',message.error));
   const reply=el('div');reply.append(el('small','回复'),el('strong',message.reply_status||'尚未检测到关联回复'));if(message.reply_at)reply.append(el('small','检测时间：'+recordTime(message.reply_at,message)));statuses.append(delivery,reply);row.append(statuses);
   const next=el('p','下一步：'+nextAction(message));next.className='record-next';row.append(next);
@@ -500,13 +509,18 @@ $('formatItalic').onclick=()=>toggleBodyInline('*','斜体文字');
 $('formatHeading').onclick=toggleBodyHeading;
 $('formatLink').onclick=insertBodyLink;
 $('body').onkeydown=event=>{if((event.metaKey||event.ctrlKey)&&!event.altKey&&!event.shiftKey&&event.key.toLowerCase()==='k'){event.preventDefault();insertBodyLink();return;}if((event.metaKey||event.ctrlKey)&&!event.altKey&&!event.shiftKey&&['b','i'].includes(event.key.toLowerCase())){event.preventDefault();event.key.toLowerCase()==='b'?toggleBodyInline('**','加粗文字'):toggleBodyInline('*','斜体文字');}};
-$('template').onchange=()=>{stashDraft();loadTemplate($('template').value);};$('activity').onchange=changeActivity;$('useRecommendedTemplate').onclick=()=>{const template=recommendedTemplate();if(!template)return;stashDraft();loadTemplate(template.id);renderContacts();notice('已使用推荐模板。之前的未保存内容仍保留在原模板草稿中。');};$('contactCountry').onchange=changeContactCountry;$('search').oninput=renderContacts;$('recordActivity').onchange=$('recordGroup').onchange=$('recordView').onchange=$('recordCountry').onchange=$('recordSender').onchange=$('recordType').onchange=()=>{recordPage=1;recordSelected.clear();renderRecords();};$('recordSearch').oninput=()=>{recordPage=1;recordSelected.clear();renderRecords();};$('recordPageSize').onchange=()=>{recordPage=1;renderRecords();};$('recordPrev').onclick=()=>{recordPage--;renderRecords();};$('recordNext').onclick=()=>{recordPage++;renderRecords();};$('templateCountry').onchange=()=>{markDirty();updateWebsiteHint();};
+$('template').onchange=()=>{stashDraft();loadTemplate($('template').value);};$('activity').onchange=changeActivity;$('useRecommendedTemplate').onclick=()=>{const template=recommendedTemplate();if(!template)return;stashDraft();loadTemplate(template.id);renderContacts();notice('已使用推荐模板。之前的未保存内容仍保留在原模板草稿中。');};$('contactCountry').onchange=changeContactCountry;$('search').oninput=renderContacts;$('recordActivity').onchange=$('recordGroup').onchange=$('recordView').onchange=$('recordCountry').onchange=$('recordSender').onchange=$('recordType').onchange=()=>{recordPage=1;recordSelected.clear();renderRecords();};$('recordSearch').oninput=()=>{recordPage=1;recordSelected.clear();renderRecords();};$('recordPageSize').onchange=()=>{recordPage=1;try{localStorage.setItem('hiwin-record-page-size',$('recordPageSize').value);}catch{}renderRecords();};
+try{const size=localStorage.getItem('hiwin-record-page-size');if([...$('recordPageSize').options].some(option=>option.value===size))$('recordPageSize').value=size;}catch{}
+$('recordMaintenance').ontoggle=()=>{const open=$('recordMaintenance').open;$('records').classList.toggle('bulk-mode',open);if(!open&&recordSelected.size){recordSelected.clear();renderRecords();}};$('recordPrev').onclick=()=>{recordPage--;renderRecords();};$('recordNext').onclick=()=>{recordPage++;renderRecords();};$('templateCountry').onchange=()=>{markDirty();updateWebsiteHint();};
 $('contactGroup').onchange=changeContactGroup;
 $('onlyWithEmail').onchange=renderContacts;
-$('selectUnsent').onclick=()=>{selected.clear();for(const row of visibleContacts().filter(eligibleUnsent))selected.add(row.id);invalidate();renderContacts();};$('selectVisible').onclick=()=>{const rows=visibleContacts().filter(row=>row.email);for(const row of rows)selected.add(row.id);invalidate();renderContacts();};$('clearSelection').onclick=()=>{selected.clear();invalidate();renderContacts();};
-$('refreshContacts').onclick=()=>perform($('refreshContacts'),async()=>{refreshingContacts=true;invalidate();lockControls();const button=$('refreshContacts');button.textContent='正在读取 Google Sheet…';notice('正在读取 Google Sheet 的联系人名单…');try{const result=await api('contacts/refresh',{});await refresh();notice(`联系人已刷新：云端 ${result.count} 家 · 新增 ${result.added} · 更新 ${result.updated} · 移除 ${result.removed}`+(result.invalid_emails?`；${result.invalid_emails} 行邮箱格式无效，请在表格修正。`:'。')+' 本地新增联系人、发送记录与停止联系标记已保留；请重新预览。','result');}finally{refreshingContacts=false;button.textContent='从 Google Sheet 刷新联系人';lockControls();}});
+$('selectUnsent').onclick=()=>{selected.clear();for(const row of visibleContacts().filter(eligibleUnsent))selected.add(row.id);invalidate();renderContacts();};$('selectVisible').onclick=()=>{const rows=visibleContacts().filter(row=>row.email);selected.clear();for(const row of rows)selected.add(row.id);invalidate();renderContacts();};$('clearSelection').onclick=()=>{selected.clear();invalidate();renderContacts();};
+$('refreshContacts').onclick=()=>perform($('refreshContacts'),async()=>{refreshingContacts=true;invalidate();lockControls();const button=$('refreshContacts');button.textContent='正在读取 Google Sheet…';notice('正在读取 Google Sheet 的联系人名单…');try{const result=await api('contacts/refresh',{});await refresh();notice(`联系人已刷新：云端 ${result.count} 家 · 新增 ${result.added} · 更新 ${result.updated} · 移除 ${result.removed}`+(result.invalid_emails?`；${result.invalid_emails} 行邮箱格式无效，请在表格修正。`:'。')+' 本地新增联系人、发送记录与停止联系标记已保留；请重新预览。','result');}finally{refreshingContacts=false;button.textContent='↻ 从 Google Sheet 刷新名单';lockControls();}});
 $('addContact').onclick=()=>perform($('addContact'),async()=>{const added=await api('contact',{name:$('newAgency').value,email:$('newEmail').value,country:$('newCountry').value});await refresh();$('contactGroup').value='';$('contactCountry').value=added.country;loadCountryTemplate(added.country);$('search').value='';if(added.email)selected.add(added.id);invalidate();renderContacts();$('newAgency').value='';$('newEmail').value='';notice('已新增 '+added.name+'（'+added.country+'）');});
-async function persistTemplate(asNew){const stored=state.templates.find(item=>item.id===currentTemplate);if(!asNew&&stored&&!templateMatchesActivity(stored))return notice('当前模板属于“'+activityName(templateActivityId(stored))+'”。请使用“另存为新模板”保存到本轮联系目的，保留原模板。','error');saving=true;lockControls();try{const result=await api('template',{...composeData(),id:asNew?null:currentTemplate});drafts.delete(currentTemplate+'|'+$('templateCountry').value);drafts.delete(result.id+'|'+$('templateCountry').value);currentTemplate=result.id;await refresh();loadTemplate(result.id);notice('模板已保存，主题、正文、附件与链接将在下次启动时保留。');}finally{saving=false;lockControls();}}
+async function persistTemplate(asNew){const stored=state.templates.find(item=>item.id===currentTemplate);if(!asNew&&stored&&!templateMatchesActivity(stored))return notice('当前模板属于“'+activityName(templateActivityId(stored))+'”。请使用“另存为新模板”保存到本轮联系目的，保留原模板。','error');const country=$('templateCountry').value,copy=asNew||!!stored&&(stored.country||'')!==country;
+ if(!asNew&&copy&&!window.confirm('绑定国家从「'+(stored.country||'不绑定')+'」改成了「'+(country||'不绑定')+'」。\n保存会另存成一个新模板，原模板保留不变。继续？'))return;
+ if(copy&&stored&&$('templateName').value.trim()===stored.name){const name=(window.prompt('新模板会和原模板同时存在，请起一个能区分的名称：',stored.name+' · '+(countryLabel(country)||'副本'))||'').trim();if(!name)return;$('templateName').value=name;}
+ saving=true;lockControls();try{const result=await api('template',{...composeData(),id:asNew?null:currentTemplate});drafts.delete(currentTemplate+'|'+$('templateCountry').value);drafts.delete(result.id+'|'+$('templateCountry').value);currentTemplate=result.id;await refresh();loadTemplate(result.id);notice(copy?'已另存为新模板「'+$('templateName').value+'」，原模板保留。':'模板已保存，主题、正文、附件与链接将在下次启动时保留。');}finally{saving=false;lockControls();}}
 async function deleteCurrentTemplate(){
  const template=state.templates.find(item=>item.id===currentTemplate);if(!template)return;
  if(!window.confirm('删除模板「'+template.name+'」'+(template.country?'（'+template.country+'）':'')+'？\n'+(dirty?'未保存的修改也会丢弃。\n':'')+'发送记录与附件文件保留；该国家将使用通用模板。'))return;

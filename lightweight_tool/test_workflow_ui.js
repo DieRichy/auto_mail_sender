@@ -7,7 +7,7 @@ const vm=require('node:vm');
 function ui(){
  const elements=new Map();
  function element(tag='div'){return {tagName:tag.toUpperCase(),value:'',checked:false,hidden:false,disabled:false,children:[],dataset:{},scrollTop:0,textContent:'',open:false,
-  classList:{toggle(){},add(){},remove(){},contains(){return false;}},append(...items){this.children.push(...items);},
+  classList:{toggle(){},add(){},remove(){},contains(){return false;}},append(...items){this.children.push(...items);},prepend(...items){this.children.unshift(...items);},
   replaceChildren(...items){this.children=items;},setAttribute(){},removeAttribute(){},addEventListener(){},scrollIntoView(){},showModal(){this.open=true;}};}
  const get=id=>{if(!elements.has(id))elements.set(id,element());return elements.get(id);};
  const context=vm.createContext({document:{getElementById:get,createElement:element,createTextNode:text=>({textContent:text}),
@@ -241,11 +241,12 @@ test('template picker groups by folder, puts archived last and never recommends 
   {id:'ca-zh',activity_id:'first-contact',name:'繁體中文 · 欧美首次合作 · 美加中文团',country:'',language:'繁體中文',subject:'s',body:'b',attachments:[]},
   {id:'tw-general',activity_id:'first-contact',name:'繁體中文 · 台灣 合作',country:'',language:'繁體中文',subject:'s',body:'b',attachments:[]},
   {id:'tw-old',activity_id:'first-contact',name:'Old Taiwan',country:'台湾',language:'繁體中文',folder:'已归档',subject:'s',body:'b',attachments:[]},
-  {id:'custom',activity_id:'first-contact',name:'Custom folder',country:'台湾',language:'繁體中文',folder:'ITF 展后',subject:'s',body:'b',attachments:[]});`);
- assert.deepEqual(json("state.templates.filter(t=>t.activity_id==='first-contact').map(templateFolder)"),['通用','欧美','欧美','台湾','已归档','ITF 展后']);
+  {id:'custom',activity_id:'first-contact',name:'Custom folder',country:'台湾',language:'繁體中文',folder:'ITF 展后',subject:'s',body:'b',attachments:[]},
+  {id:'de',activity_id:'first-contact',name:'Western DE',country:'德国',language:'English',subject:'s',body:'b',attachments:[]});`);
+ assert.deepEqual(json("state.templates.filter(t=>t.activity_id==='first-contact').map(templateFolder)"),['通用','北美','北美','台湾','已归档','ITF 展后','欧洲']);
  get('activity').value='first-contact';get('activity').onchange();get('contactCountry').value='台湾';get('contactCountry').onchange();
  const folders=get('templateFolders').children.map(box=>box.children[0].children[0].textContent);
- assert.equal(folders[0],'台湾');assert.equal(folders.at(-1),'已归档');assert.ok(folders.indexOf('通用')>folders.indexOf('欧美'));
+ assert.equal(folders[0],'台湾');assert.equal(get('templateFolders').children[0].children[0].children[0].children[0].className,'flag-img');assert.equal(folders.at(-1),'🗄️ 已归档');assert.ok(folders.includes('🇺🇸🇨🇦 北美'));assert.ok(folders.includes('🇪🇺 欧洲'));assert.ok(folders.indexOf('🌐 通用')>folders.indexOf('🇪🇺 欧洲'));
  assert.notEqual(run('currentTemplate'),'tw-old');
  run("state.country_templates['台湾']='tw-old';");assert.equal(run("recommendedTemplate('台湾')?.id"),'custom');
  get('templateSearch').value='custom';run('renderTemplatePicker()');
@@ -271,4 +272,19 @@ test('errors stay visible while ordinary notices are scheduled to close',()=>{
  run("notice('saved')");assert.equal(run('globalThis.timerCount'),1);
  run("notice('failed','error')");assert.equal(run('globalThis.timerCount'),1);assert.equal(get('noticeBar').hidden,false);
  get('noticeClose').onclick();assert.equal(get('noticeBar').hidden,true);
+});
+
+test('changing the bound country asks before saving a copy and the copy gets a distinguishable name',async()=>{
+ const {get,run}=ui();let saved=null;run("loadTemplate('itf-zh');$('templateCountry').value='日本';");
+ run("window.confirm=()=>false;api=async(path,data)=>{if(path==='template')globalThis.savedTemplate=data;return {id:'copy'};};");
+ await get('saveTemplate').onclick();assert.equal(run('globalThis.savedTemplate'),undefined);
+ run("window.confirm=()=>true;window.prompt=()=>'ITF invitation Japan';refresh=async()=>{state.templates.push({...state.templates[1],id:'copy',country:'日本',name:'ITF invitation Japan'});};");
+ await get('saveTemplate').onclick();saved=run('globalThis.savedTemplate');
+ assert.equal(saved.name,'ITF invitation Japan');assert.equal(saved.id,'itf-zh');assert.match(get('notice').textContent,/已另存为新模板「ITF invitation Japan」，原模板保留/);
+});
+
+test('both select-all buttons replace the selection with the current list',()=>{
+ const {get,run,json}=ui();run("selected.add('EMPTY');selected.add('STOP');");
+ get('selectVisible').onclick();assert.deepEqual(json('[...selected]'),['NEW','HISTORY','CURRENT','PENDING','UNCERTAIN','STOP']);
+ get('selectUnsent').onclick();assert.deepEqual(json('[...selected]'),['NEW','HISTORY']);
 });
